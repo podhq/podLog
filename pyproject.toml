@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "podlog"
+version = "0.1.0"
+description = "Production-grade logging toolkit with structured outputs and multiple sinks."
+readme = "README.md"
+authors = [{ name = "PodHQ", email = "support@podhq.example" }]
+license = { text = "MIT" }
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "platformdirs>=3.0",
+    "PyYAML>=6.0",
+    "tomli>=2.0; python_version < \"3.11\"",
+]
+
+[project.optional-dependencies]
+otlp = ["opentelemetry-sdk>=1.21.0"]
+
+[project.urls]
+Homepage = "https://github.com/podhq/podLog"
+Issues = "https://github.com/podhq/podLog/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.coverage.run]
+branch = true
+source = ["podlog"]
+omit = [
+    "tests/*",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+pythonpath = ["src"]
