@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass
 from logging.handlers import QueueHandler, QueueListener
 from queue import Queue
-from typing import Iterable, List, cast
+from typing import Any, Iterable, List, cast
 
 __all__ = ["QueueConfig", "QueueCoordinator"]
 
@@ -28,7 +28,9 @@ class QueueCoordinator:
         self.handlers: List[logging.Handler] = list(handlers)
         self.queue: Queue[logging.LogRecord] = Queue(maxsize=config.queue_maxsize)
         self.queue_handler = _SafeQueueHandler(self.queue)
-        self.listener = QueueListener(self.queue, *self.handlers, respect_handler_level=True)
+        self.listener = _BlockingQueueListener(
+            self.queue, *self.handlers, respect_handler_level=True
+        )
         self._stop_event = threading.Event()
         self._flusher: threading.Thread | None = None
         if self.config.flush_interval_ms > 0:
@@ -82,3 +84,15 @@ class _SafeQueueHandler(QueueHandler):
     def enqueue(self, record: logging.LogRecord) -> None:  # type: ignore[override]
         queue = cast(Queue[logging.LogRecord], self.queue)
         queue.put(record, block=True)
+
+
+class _BlockingQueueListener(QueueListener):
+    """Queue listener that waits for sentinel space during shutdown."""
+
+    def enqueue_sentinel(self) -> None:  # type: ignore[override]
+        # ``QueueListener`` uses ``put_nowait`` which can fail when the queue
+        # is full. Blocking ensures shutdown can always enqueue the sentinel
+        # and drain remaining records before stopping.
+        queue = cast("Queue[Any]", self.queue)
+        sentinel = getattr(self, "_sentinel")
+        queue.put(sentinel, block=True)
