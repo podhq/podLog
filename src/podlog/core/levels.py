@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from typing import Any, Callable
 
 TRACE_LEVEL_NAME = "TRACE"
 TRACE_LEVEL_NUM = 5
@@ -25,7 +25,7 @@ def register_trace_level(enable: bool = True) -> None:
         setattr(logging, TRACE_LEVEL_NAME, TRACE_LEVEL_NUM)
 
     if not hasattr(logging.Logger, "trace"):
-        def trace(self: logging.Logger, message: str, *args: object, **kwargs: object) -> None:  # type: ignore[override]
+        def trace(self: logging.Logger, message: str, *args: object, **kwargs: Any) -> None:  # type: ignore[override]
             if self.isEnabledFor(TRACE_LEVEL_NUM):
                 self._log(TRACE_LEVEL_NUM, message, args, **kwargs)
 

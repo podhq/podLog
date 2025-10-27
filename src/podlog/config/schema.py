@@ -304,6 +304,8 @@ def build_config(data: Mapping[str, Any]) -> PodlogConfig:
     if not root_logger.handlers:
         root_logger.handlers = enabled.copy()
 
+    raw_copy: Dict[str, Any] = deepcopy({k: v for k, v in data.items()})
+
     return PodlogConfig(
         paths=paths,
         formatters=formatters,
@@ -319,5 +321,5 @@ def build_config(data: Mapping[str, Any]) -> PodlogConfig:
         disable_existing_loggers=disable_existing,
         force_config=force_config,
         incremental=incremental,
-        raw=deepcopy(data),
+        raw=raw_copy,
     )

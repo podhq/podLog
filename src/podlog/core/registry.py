@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+from socket import SocketKind
 from typing import Any, Callable, Dict, Iterable
 
 from ..config.schema import FilterSpec, FormatterSpec, HandlerSpec, PathsConfig
@@ -130,9 +131,11 @@ def _build_file_handler(spec: HandlerSpec, paths: PathsConfig) -> logging.Handle
 
     retention_cfg = spec.options.get("retention", {})
     if isinstance(retention_cfg, dict):
+        max_files_raw = retention_cfg.get("max_files")
+        max_days_raw = retention_cfg.get("max_days")
         retention = RetentionPolicy(
-            max_files=int(retention_cfg.get("max_files")) if retention_cfg.get("max_files") is not None else None,
-            max_days=int(retention_cfg.get("max_days")) if retention_cfg.get("max_days") is not None else None,
+            max_files=int(max_files_raw) if max_files_raw is not None else None,
+            max_days=int(max_days_raw) if max_days_raw is not None else None,
             compress=bool(retention_cfg.get("compress", False)),
         )
     else:
@@ -159,12 +162,21 @@ def _build_console_handler(spec: HandlerSpec, paths: PathsConfig) -> logging.Han
 
 
 def _build_syslog_handler(spec: HandlerSpec, paths: PathsConfig) -> logging.Handler:
+    facility_raw = spec.options.get("facility", logging.handlers.SysLogHandler.LOG_USER)
+    facility = int(facility_raw) if not isinstance(facility_raw, str) or facility_raw.isdigit() else logging.handlers.SysLogHandler.facility_names.get(facility_raw.lower(), logging.handlers.SysLogHandler.LOG_USER)
+
+    socktype_raw = spec.options.get("socktype")
+    if isinstance(socktype_raw, SocketKind):
+        socktype = socktype_raw
+    elif isinstance(socktype_raw, int):
+        socktype = SocketKind(socktype_raw)
+    else:
+        socktype = None
+
     cfg = SyslogConfig(
         address=spec.options.get("address", ("localhost", 514)),
-        facility=int(
-            spec.options.get("facility", logging.handlers.SysLogHandler.LOG_USER)
-        ),
-        socktype=spec.options.get("socktype"),
+        facility=facility,
+        socktype=socktype,
     )
     return build_syslog_handler(cfg)
 

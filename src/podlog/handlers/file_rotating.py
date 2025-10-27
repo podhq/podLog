@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import gzip
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
+from logging.handlers import BaseRotatingHandler, RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
+from typing import cast
 
 from ..utils.paths import DateFolderStrategy, build_log_path
 from ..utils.time import utcnow
@@ -108,9 +110,10 @@ class _DateAwareMixin:
         directory.mkdir(parents=True, exist_ok=True)
         if getattr(self, "baseFilename", "") != str(target):
             self.baseFilename = str(target)
-            if getattr(self, "stream", None):
-                self.stream.close()
-                self.stream = self._open()
+            handler = cast(BaseRotatingHandler, self)
+            if getattr(handler, "stream", None):
+                handler.stream.close()
+                handler.stream = handler._open()
         self._current_dir = directory
 
     def _apply_retention(self) -> None:

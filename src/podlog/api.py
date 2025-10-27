@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict
 
 from .config.loader import load_configuration
+from .core.context import ContextAdapter
 from .core.manager import GLOBAL_MANAGER
 
 _CONFIGURED = False
@@ -33,7 +34,7 @@ def get_logger(name: str) -> logging.Logger:
     return GLOBAL_MANAGER.get_logger(name)
 
 
-def get_context_logger(name: str, **context_kv: Any):
+def get_context_logger(name: str, **context_kv: Any) -> ContextAdapter:
     """Return a context-aware logger carrying static key/value pairs."""
 
     _ensure_configured()
