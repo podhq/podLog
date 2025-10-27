@@ -1,0 +1,4690 @@
+From 7497cbf009fe403f4b26ad7a5d7b450fa57c547a Mon Sep 17 00:00:00 2001
+From: Mohsen Askari <shelterless@gmail.com>
+Date: Mon, 27 Oct 2025 15:39:04 +0330
+Subject: [PATCH 1/3] Initial commit
+
+---
+ LICENSE   | 21 +++++++++++++++++++++
+ README.md |  2 ++
+ 2 files changed, 23 insertions(+)
+ create mode 100644 LICENSE
+ create mode 100644 README.md
+
+diff --git a/LICENSE b/LICENSE
+new file mode 100644
+index 0000000..9afe003
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2025 POD HQ
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..4103523
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,2 @@
++# podLog
++standalone, production-grade Python logging package that is fully compatible with logging in the standard library, with smart defaults, context-aware logging, multiple output formats (text/JSONL/logfmt/CSV), rotation/retention, and optional async dispatch
+-- 
+2.43.0
+
+
+From 1febce3fce8ac9ea4c6e6b40e96455863000e2ba Mon Sep 17 00:00:00 2001
+From: Shelterless <Shelterless@gmail.com>
+Date: Mon, 27 Oct 2025 16:03:55 +0330
+Subject: [PATCH 2/3] upload first docs
+
+---
+ _documents/SPEC.md                            | 329 ++++++++++
+ _documents/old-source.md                      | 564 ++++++++++++++++++
+ _documents/pod_log_design_spec_roadmap_v_0.md | 404 +++++++++++++
+ 3 files changed, 1297 insertions(+)
+ create mode 100644 _documents/SPEC.md
+ create mode 100644 _documents/old-source.md
+ create mode 100644 _documents/pod_log_design_spec_roadmap_v_0.md
+
+diff --git a/_documents/SPEC.md b/_documents/SPEC.md
+new file mode 100644
+index 0000000..ad419e5
+--- /dev/null
++++ b/_documents/SPEC.md
+@@ -0,0 +1,329 @@
++# podLog – Public Package User Story & Engineering Spec (v0.3 Draft)
++
++> This document combines the existing working source (“old-source.md”) and the package design/roadmap (“pod_log_design_spec_roadmap_v_0.md”), plus additional guidance to help an AI code generator (Codex) scaffold a production-ready, standalone logging package. **No full source code** is requested here—only structure, interfaces, and contracts.
++
++---
++
++## 1) Product Overview
++
++**Goal:** Build a **standalone, production-grade Python logging package** that is fully compatible with `logging` in the standard library, with smart defaults, context-aware logging, multiple output formats (text/JSONL/logfmt/CSV), rotation/retention, and optional async dispatch. The package will be **independent**, **public**, and maintained under an **organization** GitHub repo. It is **not** related to any other private projects.
++
++**Audience:** Application and library developers who want structured, contextual, and reliable logs out-of-the-box.
++
++**Primary Outcomes:**
++- Simple API: `configure()`, `get_logger()`, `get_context_logger(...)`.
++- Deterministic log paths with date folders; decoupled filename vs. format.
++- Clean support for context + extras, with readable text and structured JSONL.
++- Safe, testable rotation/retention behavior with clear configuration.
++
++---
++
++## 2) In-Scope & Out-of-Scope
++
++**In-Scope**
++- A single installable package (tentative name: **`podlog`**) with **only** the `/core` implementation included from the legacy/demo codebase. The previous `main.py` was a **demo harness** and **must not** ship inside `src/`.
++- Formatters: text, JSONL, logfmt, CSV.
++- Handlers: console, rotating file (size/time), optional syslog/GELF/OTLP adapters.
++- Context-aware logging adapter and filters.
++- Queue-based async logging via `QueueHandler/QueueListener`.
++- Configuration via `pyproject.toml` under `[tool.podlog]` with overrides via env and runtime.
++- Documentation set for public GitHub and PyPI.
++
++**Out-of-Scope**
++- Application-specific “strategy” or business logic demos.
++- Shipping any demo/testing program as part of the library artifact.
++- Proprietary integrations not covered by standard logging or optional adapters.
++
++---
++
++## 3) Current Capabilities to Preserve (from the legacy working code)
++
++The existing core demonstrates:
++- **Context-aware adapter** that keeps a persistent context map, supports `set_context(...)`, `add_context(...)`, `add_extra(...)`, and injects a context string plus merged extras into `LogRecord` via the standard `extra` field. Text formatters can render `%(context)s` and a rendered `extra_kvs`. JSON formatters serialize all non-standard attributes into `extra`.
++- **Daily date-folder handling**: emitting to `logs/YYYY/MM/DD/<filename>` with safe rollover after midnight when the file path changes.
++- **Filters**: allow exact level, min level, or a set of allowed levels.
++- **Multiple sinks**: human-readable text, JSON for audit/trace, debug-extra with key=val pairs, alerts, and error-only sinks.
++
++> These behaviors must be carried forward into the package architecture and adapted to the new configuration and naming scheme.
++
++---
++
++## 4) Package Name & Distribution
++
++- **Name:** `podlog` (lowercase). If name is unavailable on PyPI, fallback to `pod-log` or `pod_logging`.
++- **Distribution:** `pyproject.toml` with PEP 621 metadata; build wheels and sdists.
++- **License:** MIT (unless the org prefers another permissive license).
++
++---
++
++## 5) High-Level Architecture
++
++```
++podlog/
++  ├─ src/
++  │   └─ podlog/
++  │       ├─ __init__.py
++  │       ├─ version.py
++  │       ├─ api.py                  # configure(), get_logger(), get_context_logger()
++  │       ├─ config/
++  │       │   ├─ __init__.py
++  │       │   ├─ loader.py           # discovery & merge: kwargs > env > pyproject > local files > user config > defaults
++  │       │   └─ schema.py           # dataclasses / pydantic-like validation + defaults
++  │       ├─ core/
++  │       │   ├─ manager.py          # LoggerManager builds loggers/handlers/formatters
++  │       │   ├─ context.py          # ContextAdapter + ContextFilter
++  │       │   ├─ levels.py           # TRACE=5 registration + helpers
++  │       │   ├─ registry.py         # plugin registry for handlers/formatters
++  │       │   └─ validation.py       # user-friendly config errors
++  │       ├─ handlers/
++  │       │   ├─ console.py
++  │       │   ├─ file_rotating.py    # size/time rotation, retention, gzip
++  │       │   ├─ syslog.py           # optional
++  │       │   ├─ gelf_udp.py         # optional
++  │       │   ├─ otlp.py             # optional
++  │       │   ├─ queue_async.py      # QueueHandler + QueueListener
++  │       │   └─ null.py             # drop sink
++  │       ├─ formatters/
++  │       │   ├─ text.py
++  │       │   ├─ jsonl.py
++  │       │   ├─ logfmt.py
++  │       │   └─ csvfmt.py
++  │       └─ utils/
++  │           ├─ paths.py            # base dir + date folders (flat/nested), filename synthesis
++  │           └─ time.py
++  ├─ pyproject.toml
++  ├─ README.md
++  ├─ FEATURES.md
++  ├─ USAGE.md
++  ├─ CONFIG.md
++  ├─ CONTRIBUTING.md
++  ├─ CODE_OF_CONDUCT.md
++  ├─ SECURITY.md
++  ├─ CHANGELOG.md
++  ├─ .editorconfig
++  ├─ .gitignore
++  ├─ .pre-commit-config.yaml
++  ├─ tests/
++  └─ examples/
++```
++
++**Important migration rule for Codex:** Only the **`/core`** implementation from the legacy demo is relevant for the package internals. Any **`main.py`** from the old repo was a **demo-only** file for logger testing and **must not** be part of `src/` in the package. Create separate example scripts under `examples/` if needed.
++
++---
++
++## 6) Public API (stable)
++
++```py
++import podlog as pl
++
++# 1) Configure from discovered files/env; optional runtime overrides dict
++pl.configure(overrides: dict | None = None) -> None
++
++# 2) Get a standard logger (stdlib logging.Logger)
++pl.get_logger(name: str)
++
++# 3) Get a context-aware logger
++pl.get_context_logger(name: str, **context_kv)  # returns a LoggerAdapter-like object
++```
++
++**Contracts**
++- `get_context_logger` returns an adapter that supports:
++  - `set_context(dict_or_str)` – replace persistent context
++  - `add_context(**kv)` – merge keys
++  - `clear_extra()` – clear buffered extras
++  - `add_extra(*args, **kwargs)` – collect variables/extras by explicit names or inferred variable names
++  - standard `.debug/.info/.warning/.error/.critical` methods, plus `.trace(...)` if enabled
++- The adapter **must** inject `context` and merged extras via `kwargs["extra"]` so they become attributes on the `LogRecord` and are visible to formatters. Text formatters can display `%(context)s` and a pre-rendered `%(extra_kvs)s`. JSONL formatter includes an `extra` object with all non-standard attributes.
++
++---
++
++## 7) Configuration Model & Precedence
++
++1. `configure(overrides=...)`
++2. Environment variables `PODLOG__...` (double underscore implies nested keys)
++3. `[tool.podlog]` in `pyproject.toml`
++4. `podlog.toml` / `podlog.yaml` in project root
++5. User config at OS-specific config dir
++6. Built-in defaults
++
++### Key Sections
++
++**[tool.podlog.paths]**
++- `base_dir`: default `"logs"`
++- `date_folder_mode`: `"flat"` → `logs/YYYY-MM-DD/` or `"nested"` → `logs/YYYY/MM/DD/`
++- `date_format`: used when `flat`
++
++**[tool.podlog.logging]**
++- `propagate`, `disable_existing_loggers`, `force_config`, `capture_warnings`, `incremental`
++- `queue_listener` config is under `async` section
++
++**[tool.podlog.levels]**
++- `root`, `enable_trace`, and per-logger named levels
++
++**[tool.podlog.handlers]**
++- `enabled` list with per-handler blocks
++- File rotation: `size` or `time`, with retention + optional gzip
++
++**[tool.podlog.formatters]**
++- `text`, `jsonl`, `logfmt`, `csv` with custom maps/columns
++
++**[tool.podlog.context]**
++- `enabled`, allowed keys (for validation/hardening)
++
++**[tool.podlog.async]**
++- `use_queue_listener`, `queue_maxsize`, `flush_interval_ms`, `graceful_shutdown_timeout_s`
++
++---
++
++## 8) Filename/Format Policy & Paths
++
++- **Format is chosen by config; not implied by filename.** Extensions like `.log`, `.jsonl`, `.csv` are conventional only.
++- Full path synthesis: `/{base_dir}/{date-folder}/{filename}` with `flat|nested` date-folder rules.
++- Rotation happens **inside the date folder** with numeric suffixes; archives may be gzip-compressed.
++
++---
++
++## 9) Rotation, Retention & Cleanup
++
++- **Size-based** and **time-based** rotation via stdlib handlers.
++- **Retention**: background worker deletes old archives per policy.
++- Time-based rotation should align with `when="midnight"` or other modes, configurable per handler.
++
++---
++
++## 10) Levels & Filters
++
++- Support a custom `TRACE` level (e.g., levelno 5) registered on import when enabled.
++- Filters supported: **ExactLevel**, **MinLevel**, **LevelsAllow**.
++- Routing matrix optionally maps levels → handlers.
++
++---
++
++## 11) Context & Extras Semantics
++
++- Context is an ordered, stable `key=value` string for text outputs.
++- Extras buffer aggregates structured state, merged with per-call `extra`.
++- JSONL formatter outputs full `extra` object (or a whitelist when configured).
++- Text `debug-extra` output shows `key=value` pairs for rapid diagnostics.
++
++---
++
++## 12) Async / Queue Mode
++
++- Optional `QueueHandler/QueueListener` with bounded queue (`queue_maxsize`) and graceful shutdown.
++- Flush interval and shutdown timeout configurable.
++
++---
++
++## 13) Repository Tasks for Codex (Do This Exactly)
++
++1) **Create repository scaffold** with the layout in §5.
++2) Implement **`api.py`** with `configure`, `get_logger`, `get_context_logger`.
++3) Implement **config loader** (env + files + runtime overrides) and **schema** with defaults and validation.
++4) Implement **core manager** to build handlers/formatters/loggers from config.
++5) Port and adapt the **context-aware adapter**, **filters**, and **daily/date folder path logic** into the new architecture (see §3, §11). Ensure context and extras are attached **inside** `kwargs["extra"]` for stdlib compatibility.
++6) Implement **formatters**: text, jsonl, logfmt, csv with the documented fields and options.
++7) Implement **handlers**: console, file_rotating (size/time) with retention + gzip; optional syslog/GELF/OTLP; queue_async wrapper.
++8) Implement **levels** (TRACE) and per-logger level config.
++9) Add **tests** (pytest):
++   - config precedence and validation
++   - path/date-folder synthesis (flat/nested)
++   - rotation & retention behavior
++   - context + extras visibility in text and JSONL outputs
++   - filters and routing
++   - queue mode graceful shutdown
++10) Add **examples/** scripts (not installed as package) showing quickstart and context logging.
++11) Write GitHub docs: README, FEATURES, USAGE, CONFIG, contributing, code of conduct, security, changelog.
++12) Set up **CI**: ruff/black, pytest + coverage, build wheels on tag, publish to TestPyPI → PyPI.
++
++**Critical packaging rule:** Do **not** include any legacy `main.py` demo in `src/`. If a demo is needed, place it under `examples/` only. The package’s public API lives in `api.py` and `__init__.py`.
++
++---
++
++## 14) Acceptance Criteria
++
++- `pip install` of the built wheel exposes `podlog.configure`, `podlog.get_logger`, `podlog.get_context_logger`.
++- Creating a context logger and logging at different levels produces:
++  - Text file with `%(context)s` and message
++  - A JSONL file with a top-level `extra` object capturing non-standard attributes
++  - Optional debug-extra text showing `key=value` pairs
++- Date folders are created as per config; rotation and retention behave as configured and do not cross date-folder boundaries.
++- Enabling `TRACE` results in usable `.trace(...)` calls and/or mapping `.debug` to TRACE sinks when configured.
++- Queue mode can be toggled; shutdown is graceful with no lost records in normal operation.
++
++---
++
++## 15) Documentation Plan (GitHub)
++
++- **README.md:** What/Why/Install/Quickstart
++- **FEATURES.md:** Major features list
++- **USAGE.md:** API examples and scenarios
++- **CONFIG.md:** Full TOML schema and examples
++- **CONTRIBUTING.md:** Dev setup, lint/test, PR flow, semantic commits
++- **CODE_OF_CONDUCT.md**, **SECURITY.md**, **CHANGELOG.md**
++
++---
++
++## 16) Testing Matrix (pytest)
++
++- Unit tests for each formatter/handler
++- Integration tests that load config and emit logs to tmp dir; verify files, rotation, retention
++- Property tests for context merging and `extra` serialization
++- Performance sanity tests for queue mode (bounded queue, backpressure)
++
++---
++
++## 17) Additional Recommendations
++
++- Provide a **sampling** and **redaction** hook (roadmap), e.g., to mask API keys and emails.
++- Add a **plugin registry** to allow external formatters/handlers.
++- Publish **benchmarks** comparing console vs. file vs. queue modes.
++
++---
++
++## 18) Example Minimal `pyproject.toml` (for docs)
++
++```toml
++[tool.podlog.paths]
++base_dir = "logs"
++date_folder_mode = "flat"
++
++[tool.podlog.handlers]
++enabled = ["console", "app_file"]
++
++[tool.podlog.handlers.console]
++type = "console"
++level = "INFO"
++formatter = "text_default"
++
++[tool.podlog.handlers.app_file]
++type = "file_rotating"
++level = "DEBUG"
++formatter = "text_rich"
++filename = "app.log"
++rotation = { mode = "size", max_bytes = 5000000, backup_count = 10 }
++retention = { days = 14, compress = true }
++
++[tool.podlog.formatters.text_default]
++type = "text"
++fmt = "%(asctime)s [%(levelname)s] %(name)s | %(message)s"
++
++[tool.podlog.formatters.text_rich]
++type = "text"
++fmt = "%(asctime)s [%(levelname)s] %(name)s [%(context)s] :: %(message)s"
++```
++
++---
++
++## 19) Notes to Codex (Execution Plan)
++
++- Generate the repo skeleton and implement modules per sections above.
++- Ensure **no full demo app** ships inside the package; examples must live under `examples/`.
++- Favor composition and dependency injection inside `core/manager.py` to keep the API thin.
++- When porting legacy logic, keep the `extra` injection strictly inside `kwargs["extra"]` for stdlib compatibility and formatter access.
++- Prepare initial unit tests for CI and verify Windows/macOS/Linux filesystem path handling for date folders and gzip.
++
++---
++
++**End of Spec**
++
+diff --git a/_documents/old-source.md b/_documents/old-source.md
+new file mode 100644
+index 0000000..54581ff
+--- /dev/null
++++ b/_documents/old-source.md
+@@ -0,0 +1,564 @@
++محسن—علت خطا این بود که ما در `process` مقدار `context` و `extra_kvs` را به‌صورت **کلیدهای Top-Level** داخل `kwargs` می‌گذاشتیم؛ درحالی‌که `logging` فقط `extra`، `exc_info` و… را می‌پذیرد. باید این مقادیر داخل `kwargs["extra"]` تزریق شوند تا به‌صورت attribute روی `LogRecord` بنشینند و Formatter بتواند از `%(context)s` و `%(extra_kvs)s` استفاده کند.
++
++من این را اصلاح کردم و نسخه‌ی نهایی همه فایل‌ها را (مطابق طراحی جدیدت: بدون متد `trace`، با `add_extra`، `set_context`، خروجی `trace`=JSON و `debug_extra`=متنی) می‌گذارم. این نسخه با Pylance هم سازگار است.
++
++---
++
++## core/log_filters.py
++
++```python
++# core/log_filters.py
++from __future__ import annotations
++import logging
++from typing import Iterable, Set
++
++class LevelsAllowFilter(logging.Filter):
++    """Allow only a specific set of levels (exact match)."""
++    def __init__(self, levels: Iterable[int]):
++        super().__init__()
++        self.levels: Set[int] = set(levels)
++    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
++        return record.levelno in self.levels
++
++class MinLevelFilter(logging.Filter):
++    """Allow record.levelno >= min_level."""
++    def __init__(self, min_level: int):
++        super().__init__()
++        self.min_level = min_level
++    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
++        return record.levelno >= self.min_level
++
++class ExactLevelFilter(logging.Filter):
++    """Allow only exact one level."""
++    def __init__(self, level: int):
++        super().__init__()
++        self.level = level
++    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
++        return record.levelno == self.level
++```
++
++---
++
++## core/daily_folder_handler.py
++
++```python
++# core/daily_folder_handler.py
++from __future__ import annotations
++import os
++import datetime as _dt
++import logging
++from typing import Optional
++
++class DailyFolderFileHandler(logging.FileHandler):
++    """
++    Writes to /logs/YYYY/MM/DD/<filename>.
++    Re-evaluates path per emit to roll after midnight safely.
++    """
++    def __init__(self, base_dir: str, filename: str, encoding: Optional[str] = "utf-8"):
++        self.base_dir = base_dir
++        self.filename = filename
++        os.makedirs(base_dir, exist_ok=True)
++        path = self._resolve_path()
++        super().__init__(path, mode="a", encoding=encoding)
++
++    def _resolve_path(self) -> str:
++        today = _dt.date.today()
++        day_dir = os.path.join(self.base_dir, f"{today.year:04d}", f"{today.month:02d}", f"{today.day:02d}")
++        os.makedirs(day_dir, exist_ok=True)
++        return os.path.join(day_dir, self.filename)
++
++    def emit(self, record: logging.LogRecord) -> None:  # type: ignore[override]
++        todays_path = self._resolve_path()
++        if self.stream and getattr(self.stream, "name", "") != todays_path:
++            self.acquire()
++            try:
++                self.stream.close()
++                self.baseFilename = todays_path  # keep logging internals in sync
++                self.stream = self._open()
++            finally:
++                self.release()
++        super().emit(record)
++```
++
++---
++
++## core/logger.py  ✅ (اصلاح کلیدی در `process`: قراردادن context/extra_kvs داخل extra)
++
++```python
++# core/logger.py
++from __future__ import annotations
++
++import inspect
++import json
++import logging
++from logging import Formatter
++from typing import Any, Dict, Mapping, MutableMapping, Optional, Tuple, cast
++
++from .log_filters import LevelsAllowFilter, MinLevelFilter, ExactLevelFilter
++from .daily_folder_handler import DailyFolderFileHandler
++
++# --------- Text formats (human-readable) ----------
++LOG_FORMAT_TEXT = "%(asctime)s | %(levelname)-5s | %(name)s | %(context)s | %(message)s"
++# For text file that wants to show extras as key=val pairs
++LOG_FORMAT_TEXT_WITH_EXTRAS = "%(asctime)s | %(levelname)-5s | %(name)s | %(context)s | %(message)s | %(extra_kvs)s"
++DATEFMT = "%Y-%m-%d %H:%M:%S"
++
++
++# ---------- JSON formatter (for audit & trace) ----------
++class JSONFormatter(logging.Formatter):
++    """
++    JSON formatter with optional whitelist for 'extra' keys.
++    If whitelist is set (e.g., ['trade']), only those extra keys are included.
++    Otherwise (trace), include all non-standard attributes as 'extra'.
++    """
++    def __init__(self, *, datefmt: Optional[str] = None, whitelist: Optional[list[str]] = None):
++        super().__init__(datefmt=datefmt)
++        self.whitelist = whitelist or []
++
++    def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
++        data = record.__dict__.copy()
++
++        payload: Dict[str, Any] = {
++            "ts": self.formatTime(record, self.datefmt),
++            "level": record.levelname,
++            "name": record.name,
++            "context": data.get("context", ""),
++            "message": record.getMessage(),
++        }
++
++        std = {
++            "name","msg","args","levelname","levelno","pathname","filename","module","exc_info","exc_text",
++            "stack_info","lineno","funcName","created","msecs","relativeCreated","thread","threadName",
++            "processName","process","asctime","context","extra_kvs"
++        }
++
++        if self.whitelist:
++            extra_obj: Dict[str, Any] = {}
++            for k in self.whitelist:
++                if k in data:
++                    extra_obj[k] = data[k]
++            payload["extra"] = extra_obj
++        else:
++            payload["extra"] = {k: v for k, v in data.items() if k not in std}
++
++        return json.dumps(payload, ensure_ascii=False)
++
++
++# ---------- Context-aware adapter with extras buffer ----------
++class ContextAdapter(logging.LoggerAdapter):
++    """
++    - Persistent context dict (use set_context/add_context)
++    - add_extra(*args, **kwargs) to buffer extra key-values:
++        * kwargs => keys given explicitly
++        * args   => variable name inference from caller's frame; fallback varN
++    - process(...) injects:
++        * context string (built from persistent context) into extra
++        * merged extras (buffer + call extras) into extra
++        * extra_kvs (textified extras) into extra
++    """
++    def __init__(self, logger: logging.Logger, base_context: Optional[Mapping[str, Any]] = None) -> None:
++        super().__init__(logger, {})  # we manage our own store
++        self._context: Dict[str, Any] = dict(base_context or {})
++        self._extra_buf: Dict[str, Any] = {}
++
++    # ---- Public API ----
++    def set_context(self, ctx: Mapping[str, Any] | str) -> None:
++        """Replace persistent context. Accepts dict or 'k=v k2=v2' string."""
++        if isinstance(ctx, str):
++            self._context = self._parse_ctx_string(ctx)
++        else:
++            self._context = dict(ctx)
++
++    def add_context(self, **kwargs: Any) -> None:
++        """Merge/override keys into persistent context."""
++        self._context.update(kwargs)
++
++    def clear_extra(self) -> None:
++        """Clear the extras buffer."""
++        self._extra_buf.clear()
++
++    def add_extra(self, *args: Any, **kwargs: Any) -> None:
++        """
++        Add multiple variables into extras buffer.
++        - kwargs: explicit names, e.g., add_extra(diff=1.23, denom=42)
++        - args: infer names from caller's locals by identity; fallback to 'var1', 'var2', ...
++        """
++        # 1) explicit kwargs
++        for k, v in kwargs.items():
++            self._extra_buf[k] = v
++
++        if not args:
++            return
++
++        # 2) infer names for *args from caller frame
++        frame = inspect.currentframe()
++        if frame is None:
++            # can't inspect; fallback to varN
++            for i, val in enumerate(args, start=1):
++                self._extra_buf[f"var{i}"] = val
++            return
++
++        try:
++            caller = frame.f_back  # the function that called add_extra
++            names_assigned: Dict[int, str] = {}
++            if caller is not None:
++                # build reverse map by object id (identity matching)
++                for name, val in caller.f_locals.items():
++                    names_assigned[id(val)] = name
++
++            used_names: set[str] = set(self._extra_buf.keys())
++            fallback_idx = 1
++            for val in args:
++                key = names_assigned.get(id(val))
++                if key is None or key in used_names:
++                    # fallback unique name
++                    while True:
++                        candidate = f"var{fallback_idx}"
++                        fallback_idx += 1
++                        if candidate not in used_names:
++                            key = candidate
++                            break
++                self._extra_buf[key] = val
++                used_names.add(key)
++        finally:
++            # break reference cycles
++            del frame
++
++    # ---- Internals ----
++    @staticmethod
++    def _parse_ctx_string(s: str) -> Dict[str, Any]:
++        """
++        Parse 'k=v k2=v2' into dict. If malformed, store whole string under '_ctx'.
++        """
++        result: Dict[str, Any] = {}
++        parts = [p for p in s.strip().split() if p]
++        try:
++            for p in parts:
++                if "=" in p:
++                    k, v = p.split("=", 1)
++                    result[k] = v
++            if result:
++                return result
++            return {"_ctx": s}
++        except Exception:
++            return {"_ctx": s}
++
++    @staticmethod
++    def _ctx_to_str(ctx: Mapping[str, Any]) -> str:
++        # stable ordering for readability
++        items = sorted(ctx.items(), key=lambda kv: kv[0])
++        return " ".join(f"{k}={v}" for k, v in items)
++
++    @staticmethod
++    def _extras_to_kv_text(d: Mapping[str, Any]) -> str:
++        if not d:
++            return "-"
++        parts: list[str] = []
++        for k, v in d.items():
++            try:
++                s = json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v)
++            except Exception:
++                s = repr(v)
++            parts.append(f"{k}={s}")
++        return " ".join(parts)
++
++    # Signature must match LoggerAdapter (kwargs is MutableMapping)
++    def process(self, msg: str, kwargs: MutableMapping[str, Any]) -> Tuple[str, MutableMapping[str, Any]]:
++        # Build final context string
++        ctx_str = self._ctx_to_str(self._context)
++
++        # Merge extras: buffered + call-site extras (call-site overrides)
++        call_extra = kwargs.get("extra")
++        merged: Dict[str, Any] = {}
++        merged.update(self._extra_buf)
++        if isinstance(call_extra, dict):
++            merged.update(call_extra)
++
++        # Put context & rendered extras INSIDE 'extra' so Logger accepts kwargs
++        merged["context"] = ctx_str
++        merged["extra_kvs"] = self._extras_to_kv_text(merged)
++
++        kwargs["extra"] = merged
++        # DO NOT set 'context' or 'extra_kvs' at top-level in kwargs (would break Logger._log)
++        return msg, kwargs
++
++
++# ---------- Builder ----------
++def build_logger(
++    name: str,
++    base_logs_dir: str = "logs",
++    strategy: str = "fluxbot",
++    base_context: Optional[Mapping[str, Any] | str] = None
++) -> ContextAdapter:
++    """
++    Build a multi-sink logger wrapped in ContextAdapter.
++    - 'verbose.log'       : text, DEBUG+ (context + message)
++    - 'audit.log'         : JSON (INFO & ERROR) with whitelist ['trade']
++    - 'trace.log'         : JSON (DEBUG-only) dump all extras
++    - 'debug_extra.log'   : text (DEBUG-only) includes extras as key=value
++    - 'alerts.log'        : text (WARNING+)
++    - 'errors.log'        : text (ERROR-only)
++    """
++    logger = logging.getLogger(name)
++
++    if not logger.handlers:
++        logger.setLevel(logging.DEBUG)
++        logger.propagate = False
++
++        # Formatters
++        fmt_text = Formatter(LOG_FORMAT_TEXT, DATEFMT)
++        fmt_text_with_extras = Formatter(LOG_FORMAT_TEXT_WITH_EXTRAS, DATEFMT)
++        fmt_audit_json = JSONFormatter(datefmt=DATEFMT, whitelist=["trade"])
++        fmt_trace_json = JSONFormatter(datefmt=DATEFMT)
++
++        # Handlers
++        # 1) VERBOSE: DEBUG+ (text, minimal)
++        h_verbose = DailyFolderFileHandler(base_logs_dir, f"{strategy}.verbose.log")
++        h_verbose.setLevel(logging.DEBUG)
++        h_verbose.setFormatter(fmt_text)
++
++        # 2) AUDIT: INFO & ERROR (JSON only trade)
++        h_audit = DailyFolderFileHandler(base_logs_dir, f"{strategy}.audit.log")
++        h_audit.setLevel(logging.DEBUG)
++        h_audit.addFilter(LevelsAllowFilter({logging.INFO, logging.ERROR}))
++        h_audit.setFormatter(fmt_audit_json)
++
++        # 3) TRACE: DEBUG-only (JSON full extras)
++        h_trace = DailyFolderFileHandler(base_logs_dir, f"{strategy}.trace.log")
++        h_trace.setLevel(logging.DEBUG)
++        h_trace.addFilter(ExactLevelFilter(logging.DEBUG))
++        h_trace.setFormatter(fmt_trace_json)
++
++        # 4) DEBUG EXTRA (text with extras): DEBUG-only
++        h_debugx = DailyFolderFileHandler(base_logs_dir, f"{strategy}.debug_extra.log")
++        h_debugx.setLevel(logging.DEBUG)
++        h_debugx.addFilter(ExactLevelFilter(logging.DEBUG))
++        h_debugx.setFormatter(fmt_text_with_extras)
++
++        # 5) ALERTS: WARNING+
++        h_alerts = DailyFolderFileHandler(base_logs_dir, f"{strategy}.alerts.log")
++        h_alerts.setLevel(logging.WARNING)
++        h_alerts.addFilter(MinLevelFilter(logging.WARNING))
++        h_alerts.setFormatter(fmt_text)
++
++        # 6) ERRORS: ERROR-only
++        h_errors = DailyFolderFileHandler(base_logs_dir, f"{strategy}.errors.log")
++        h_errors.setLevel(logging.ERROR)
++        h_errors.addFilter(ExactLevelFilter(logging.ERROR))
++        h_errors.setFormatter(fmt_text)
++
++        for h in (h_verbose, h_audit, h_trace, h_debugx, h_alerts, h_errors):
++            logger.addHandler(h)
++
++    adapter = ContextAdapter(logger)
++    if base_context is not None:
++        adapter.set_context(base_context)
++    return adapter
++```
++
++---
++
++## main.py  (بدون تغییر نسبت به نسخه‌ی قبلی، اما با این اصلاح الان اجرا می‌شود)
++
++```python
++# main.py
++from __future__ import annotations
++import argparse
++import random
++from typing import Optional, Dict, Any, TypedDict
++
++from core.logger import build_logger  # ContextAdapter with set_context/add_context/add_extra and .debug/.info/...
++
++class Position(TypedDict):
++    entry: float
++    sl: float
++    tp: float
++    size_pct: float
++
++class EMAIndicator:
++    def __init__(self, period: int, logger):
++        self.period = period
++        self.value: Optional[float] = None
++        self.log = logger
++
++    def update(self, price: float) -> float:
++        alpha = 2 / (self.period + 1)
++        prev = self.value
++        self.value = price if prev is None else (alpha * price + (1 - alpha) * prev)
++        diff = (self.value - (prev if prev is not None else self.value))
++        self.log.add_extra(alpha=alpha)
++        self.log.add_extra(prev, price, diff)
++        self.log.debug("EMA update")
++        return self.value
++
++class MomentumSignal:
++    def __init__(self, fast: EMAIndicator, slow: EMAIndicator, threshold: float, logger):
++        self.fast = fast
++        self.slow = slow
++        self.threshold = threshold
++        self.log = logger
++
++    def compute(self) -> Optional[Dict[str, Any]]:
++        if self.fast.value is None or self.slow.value is None:
++            self.log.debug("Insufficient data for signal")
++            return None
++        diff = self.fast.value - self.slow.value
++        denom = max(abs(self.slow.value), 1e-9)
++        strength = diff / denom
++        self.log.add_extra(diff, denom, strength=strength, thr=self.threshold)
++        self.log.debug("Momentum scoring")
++        if strength > self.threshold:
++            self.log.add_extra(side="BUY", strength=strength)
++            self.log.debug("Signal=BUY")
++            return {"side": "BUY", "strength": strength}
++        else:
++            self.log.add_extra(side="NONE", strength=strength)
++            self.log.debug("No-signal")
++            return None
++
++class LongMomentumStrategy:
++    def __init__(self, signal: MomentumSignal, logger, risk_limit: float = 0.02, position_pct: float = 0.10):
++        self.signal = signal
++        self.log = logger
++        self.risk_limit = risk_limit
++        self.position_pct = position_pct
++        self.position: Optional[Position] = None
++
++    def on_bar(self, bar: Dict[str, float], *, atr_value: float) -> None:
++        self.log.add_extra(bar=bar)
++        self.log.debug("Bar received")
++        if self.position is not None:
++            self._maybe_close(bar)
++            return
++        sig = self.signal.compute()
++        if not sig:
++            return
++        entry = float(bar['close'])
++        sl = float(entry - 1.8 * atr_value)
++        per_trade_risk = (entry - sl) / entry
++        tp = float(entry + 2.2 * (entry - sl))
++        if per_trade_risk > self.risk_limit:
++            self.log.add_extra(risk_pct=per_trade_risk, limit=self.risk_limit)
++            self.log.debug("Skip trade: risk over limit")
++            return
++        self.position = {
++            "entry": float(entry),
++            "sl": float(sl),
++            "tp": float(tp),
++            "size_pct": float(self.position_pct),
++        }
++        trade_open = {
++            "id": f"{bar['time']}",
++            "side": "LONG",
++            "entry": entry,
++            "size_pct": float(self.position_pct),
++            "sl": sl,
++            "tp": tp,
++            "rr": 2.2
++        }
++        self.log.add_extra(trade=trade_open)
++        self.log.info("[OPEN]")
++
++    def _maybe_close(self, bar: Dict[str, float]) -> None:
++        pos = self.position
++        if pos is None:
++            return
++        e = float(pos["entry"])
++        sl = float(pos["sl"])
++        tp = float(pos["tp"])
++        closed: Optional[tuple[str, float]] = None
++        if bar["low"] <= sl:
++            closed = ("SL", sl)
++        elif bar["high"] >= tp:
++            closed = ("TP", tp)
++        if not closed:
++            return
++        reason, price = closed
++        pnl = (price - e) / e
++        status = "WIN" if pnl > 0 else "LOSS"
++        trade_close = {
++            "id": f"{bar['time']}",
++            "exit": float(price),
++            "pnl_pct": pnl * 100.0,
++            "status": status,
++            "reason": reason,
++        }
++        self.log.add_extra(trade=trade_close)
++        self.log.info("[CLOSE]")
++        self.position = None
++
++def gen_bars(n: int, base: float = 100.0, noise: float = 0.6):
++    import math as _m
++    rnd = random.Random(42)
++    price = base
++    for i in range(n):
++        drift = 0.05 * _m.sin(i / 5.0)
++        price = max(1.0, price * (1 + drift * 0.01))
++        candle_noise = (rnd.random() - 0.5) * noise
++        close = max(1.0, price * (1 + candle_noise * 0.01))
++        high = max(price, close) * (1 + abs(candle_noise) * 0.005)
++        low = min(price, close) * (1 - abs(candle_noise) * 0.005)
++        open_ = price
++        yield {"time": f"T{i:03d}", "open": float(open_), "high": float(high), "low": float(low), "close": float(close)}
++        price = close
++
++def est_atr_like(prev_close: float, bar: Dict[str, float], prev_atr: Optional[float]) -> float:
++    tr = max(bar["high"] - bar["low"], abs(bar["high"] - prev_close), abs(prev_close - bar["low"]))
++    if prev_atr is None:
++        return float(tr)
++    return float(0.13 * tr + 0.87 * prev_atr)
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description="FluxBot logging demo")
++    parser.add_argument("--symbol", default="BTCUSDT")
++    parser.add_argument("--timeframe", default="15m")
++    parser.add_argument("--bars", type=int, default=60)
++    parser.add_argument("--logs-dir", default="logs")
++    parser.add_argument("--strategy", default="fluxbot_demo")
++    args = parser.parse_args()
++
++    log = build_logger(
++        "runner",
++        base_logs_dir=args.logs_dir,
++        strategy=args.strategy,
++        base_context={"symbol": args.symbol, "tf": args.timeframe, "step": "demo"}
++    )
++
++    log.debug("Starting demo run")
++
++    ema_fast = EMAIndicator(period=8, logger=log)
++    ema_slow = EMAIndicator(period=21, logger=log)
++    signal = MomentumSignal(ema_fast, ema_slow, threshold=0.0012, logger=log)
++    strategy = LongMomentumStrategy(signal, logger=log, risk_limit=0.02, position_pct=0.10)
++
++    prev_close = 100.0
++    atr_val: Optional[float] = None
++
++    for bar in gen_bars(args.bars, base=100.0):
++        ema_fast.update(bar["close"])
++        ema_slow.update(bar["close"])
++        atr_val = est_atr_like(prev_close, bar, atr_val)
++        prev_close = bar["close"]
++        strategy.on_bar(bar, atr_value=atr_val)
++
++        if bar["time"] == "T025":
++            try:
++                raise TimeoutError("Simulated exchange timeout (5s)")
++            except Exception as ex:
++                log.add_extra(op="place_order", retryable=True, error=str(ex))
++                log.debug("Exchange error")
++                logging.getLogger("runner").error(f"Exchange error: {ex}")
++
++    log.debug("Demo run finished")
++
++if __name__ == "__main__":
++    main()
++```
++
++---
++
++### نکتهٔ کوچک
++
++الان `context` و `extra_kvs` داخل `extra` تزریق می‌شن؛ `Formatter`ها به‌صورت `%(`**context**`)s` و `%(`**extra_kvs**`)s` از روی `record` می‌خونن، چون `logging` تمام کلیدهای `extra` رو به‌عنوان attribute به `LogRecord` اضافه می‌کنه. پس هم سازگار با API استاندارد هستیم، هم دیگه ارور `unexpected keyword argument 'context'` نداریم.
++
++
+diff --git a/_documents/pod_log_design_spec_roadmap_v_0.md b/_documents/pod_log_design_spec_roadmap_v_0.md
+new file mode 100644
+index 0000000..455ec21
+--- /dev/null
++++ b/_documents/pod_log_design_spec_roadmap_v_0.md
+@@ -0,0 +1,404 @@
++# podLog – Design Spec & Roadmap (v0.2)
++
++> **Goal**: A standalone, production-grade logging package for Python projects (FluxBot and beyond), highly configurable via files (pyproject.toml / podlog.toml / YAML), with clean defaults, stdlib-logging compatibility, and ready for PyPI + GitHub collaboration.
++
++---
++
++## ✅ Key Decisions (incorporating feedback)
++
++1) **Filename & format decoupling**  
++   Filenames **do not encode format**. Example: `trace.log` (text), `trades.jsonl` (JSON Lines), `metrics.csv` (CSV), regardless of content formatter. Extension is conventional, but **format is chosen in config**.
++
++2) **Stdlib logging compatibility settings**  
++   We surface common `logging` knobs under `[tool.podlog.logging]` with sensible defaults:
++   - `propagate` (bool, default: `false` for named loggers created by podLog)
++   - `disable_existing_loggers` (bool, default: `false`)
++   - `force_config` (bool, default: `false`) – if `true`, podLog will reconfigure root handlers
++   - `capture_warnings` (bool, default: `true`) – redirect `warnings` to logging
++   - `incremental` (bool, default: `false`) – incremental updates where supported
++   - `queue_listener` settings kept separate (see async section)
++
++3) **Additional output formats (formatters)**  
++   Beyond Text and JSONL, podLog ships:
++   - `text` – human-readable pattern
++   - `jsonl` – structured JSON per line
++   - `logfmt` – key=value pairs (Heroku-style)
++   - `csv` – columnar CSV header + rows
++   (Optional adapters for Syslog/GELF/OTLP are provided as **handlers**, not formatters.)
++
++4) **Docs for GitHub**  
++   We ship comprehensive public docs: `README.md`, `FEATURES.md`, `USAGE.md`, `CONFIG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, `SECURITY.md`. See outlines below.
++
++5) **Rolling/Rotation**  
++   Built-in **size-based** and **time-based** rotation via stdlib (`RotatingFileHandler`, `TimedRotatingFileHandler`). Rotation happens **inside the date folder**. Numeric suffix `.1`, `.2`, ... is used by default; optional gzip compression for rotated archives. Retention policy via cleanup worker.
++
++---
++
++## Package Layout
++
++```
++podlog/
++  ├─ src/
++  │   └─ podlog/
++  │       ├─ __init__.py
++  │       ├─ version.py
++  │       ├─ api.py                  # configure(), get_logger(), get_context_logger()
++  │       ├─ config/
++  │       │   ├─ __init__.py
++  │       │   ├─ loader.py           # discover & merge config from: kwargs > env > pyproject > local files > user config > defaults
++  │       │   └─ schema.py           # dataclasses / pydantic-like validation + defaults
++  │       ├─ core/
++  │       │   ├─ manager.py          # LoggerManager (singleton), builds loggers/handlers/formatters
++  │       │   ├─ context.py          # ContextAdapter + ContextFilter (symbol, timeframe, step, ...)
++  │       │   ├─ levels.py           # TRACE=5 registration + helper
++  │       │   ├─ registry.py         # plugin registry for handlers/formatters
++  │       │   └─ validation.py       # config errors with actionable messages
++  │       ├─ handlers/
++  │       │   ├─ console.py
++  │       │   ├─ file_rotating.py    # size/time rotation, retention, gzip, numeric suffixes
++  │       │   ├─ syslog.py           # optional (platform dependent)
++  │       │   ├─ gelf_udp.py         # optional (Graylog)
++  │       │   ├─ otlp.py             # optional (OpenTelemetry logs exporter)
++  │       │   ├─ queue_async.py      # QueueHandler + QueueListener
++  │       │   └─ null.py             # drop sink
++  │       ├─ formatters/
++  │       │   ├─ text.py
++  │       │   ├─ jsonl.py
++  │       │   ├─ logfmt.py
++  │       │   └─ csvfmt.py
++  │       └─ utils/
++  │           ├─ paths.py            # base dir + date folders (flat/nested), filename synthesis
++  │           └─ time.py
++  ├─ pyproject.toml
++  ├─ README.md
++  ├─ FEATURES.md
++  ├─ USAGE.md
++  ├─ CONFIG.md
++  ├─ CONTRIBUTING.md
++  ├─ CODE_OF_CONDUCT.md
++  ├─ SECURITY.md
++  ├─ CHANGELOG.md
++  ├─ .editorconfig
++  ├─ .gitignore
++  ├─ .pre-commit-config.yaml
++  ├─ tests/
++  └─ examples/
++```
++
++> **Note**: No demo/test classes inside `src/`. Tests live in `tests/` only.
++
++---
++
++## Configuration Model (TOML) – Overview
++
++### Sources & precedence
++1. Runtime overrides via `podlog.configure(overrides: dict)`  
++2. Environment variables `PODLOG__...` (double underscores `__` → nested keys)  
++3. `[tool.podlog]` in `pyproject.toml`  
++4. `podlog.toml` / `podlog.yaml` in project root  
++5. User config: `~/.config/podlog/config.toml` (Linux/macOS) or `%APPDATA%/podlog/config.toml` (Windows)  
++6. Built-in defaults
++
++### Paths & Date folders
++```toml
++[tool.podlog.paths]
++base_dir = "logs"
++date_folder_mode = "flat"          # flat | nested
++date_format = "%Y-%m-%d"           # only used when flat
++nested_order = ["year","month","day"]
++```
++- **flat** → `logs/2025-10-27/`
++- **nested** → `logs/2025/10/27/`
++
++### Stdlib logging compatibility
++```toml
++[tool.podlog.logging]
++propagate = false
++disable_existing_loggers = false
++force_config = false
++capture_warnings = true
++incremental = false
++```
++
++### Levels
++```toml
++[tool.podlog.levels]
++root = "INFO"
++enable_trace = true
++
++[tool.podlog.levels.named]
++strategy = "DEBUG"
++exchange = "INFO"
++```
++
++### Handlers (enable/disable & per-handler setup)
++```toml
++[tool.podlog.handlers]
++enabled = ["console", "app_file", "json_trades", "csv_metrics"]
++
++[tool.podlog.handlers.console]
++type = "console"
++level = "INFO"
++formatter = "text_default"
++stderr = true
++
++[tool.podlog.handlers.app_file]
++type = "file_rotating"
++level = "DEBUG"
++formatter = "text_rich"
++filename = "app.log"                      # filename only; podLog builds full path in date folder
++rotation = { mode = "size", max_bytes = 5000000, backup_count = 10 }
++retention = { days = 14, compress = true }
++
++[tool.podlog.handlers.json_trades]
++type = "file_rotating"
++level = "INFO"
++formatter = "jsonl_struct"
++filename = "trades.jsonl"
++rotation = { mode = "time", when = "midnight", interval = 1, backup_count = 7 }
++retention = { days = 30, compress = true }
++
++[tool.podlog.handlers.csv_metrics]
++type = "file_rotating"
++level = "INFO"
++formatter = "csv_metrics"
++filename = "metrics.csv"
++rotation = { mode = "size", max_bytes = 2000000, backup_count = 5 }
++retention = { days = 7, compress = false }
++```
++
++### Routing (optional)
++```toml
++[tool.podlog.routing]
++json_trades = ["INFO","WARNING","ERROR","CRITICAL"]
++app_file   = ["TRACE","DEBUG","INFO","WARNING","ERROR","CRITICAL"]
++```
++
++### Formatters
++```toml
++[tool.podlog.formatters.text_default]
++type = "text"
++fmt = "%(asctime)s [%(levelname)s] %(name)s | %(message)s"
++datefmt = "%Y-%m-%d %H:%M:%S"
++
++[tool.podlog.formatters.text_rich]
++type = "text"
++fmt = "%(asctime)s [%(levelname)s] %(name)s [%(context)s] :: %(message)s"
++datefmt = "%Y-%m-%d %H:%M:%S"
++
++[tool.podlog.formatters.jsonl_struct]
++type = "jsonl"
++map = { ts="timestamp", lvl="level", log="logger", msg="message" }
++include_extra = true
++
++[tool.podlog.formatters.csv_metrics]
++type = "csv"
++# columns define CSV header and the order of fields
++columns = ["timestamp","level","logger","message","context","symbol","timeframe","step"]
++include_extra = false
++
++[tool.podlog.formatters.logfmt_default]
++type = "logfmt"
++# template defines which keys are included; order preserved
++keys = ["timestamp","level","logger","message","context"]
++```
++
++### Context & Validation
++```toml
++[tool.podlog.context]
++enabled = true
++allowed_keys = ["symbol","timeframe","step","run_id","order_id"]
++```
++
++### Async / Queue
++```toml
++[tool.podlog.async]
++use_queue_listener = true
++queue_maxsize = 10000
++flush_interval_ms = 200
++graceful_shutdown_timeout_s = 5
++```
++
++### Environment overrides (examples)
++```
++PODLOG__LEVELS__ROOT=DEBUG
++PODLOG__HANDLERS__APP_FILE__RETENTION__DAYS=60
++PODLOG__PATHS__DATE_FOLDER_MODE=nested
++```
++
++---
++
++## Filenames, Extensions & Paths – Policy
++- **Format never appears in the filename** (your request #1).  
++- The **extension is conventional** (e.g., `.log`, `.jsonl`, `.csv`) and **does not drive the formatter**; the formatter is chosen by config.  
++- podLog composes full path as:  
++  `/{base_dir}/{date-folder}/<filename>`  
++  with date folder built per `flat|nested` rules.
++
++---
++
++## Rotation & Retention
++- **Size-based** (`RotatingFileHandler`): rolls when `max_bytes` exceeded; numeric suffixes `.1`, `.2`, ... inside the **same date folder**. Optional gzip compression for archived files.
++- **Time-based** (`TimedRotatingFileHandler`): roll on `when` ("midnight", "H", etc.) with `interval`. Optional gzip compression.
++- **Retention**: background cleanup removes archives older than `retention.days`.
++
++> Example rolled files (size mode):
++```
++logs/2025-10-27/app.log
++logs/2025-10-27/app.log.1.gz
++logs/2025-10-27/app.log.2.gz
++```
++
++---
++
++## API Surface (consumer)
++```python
++import podlog as pl
++
++# 1) Auto-discover config from files/env; you may pass runtime overrides
++pl.configure()
++
++# 2) Get regular or context logger
++log = pl.get_logger("strategy")
++ctx = pl.get_context_logger("strategy", symbol="BTC/USDT", timeframe="15m")
++
++log.info("App started")
++ctx.info("Signal accepted", extra={"context": {"step": "validate"}})
++ctx.trace("ATR computed")  # enabled if TRACE active
++```
++
++---
++
++## GitHub Docs – Outlines
++
++**README.md**
++- What is podLog?
++- Key features
++- Quickstart
++- Install (`pip install podlog`)
++- Basic configuration (pyproject.toml snippet)
++- Example usage
++- Links to `USAGE.md`, `CONFIG.md`, `FEATURES.md`
++
++**FEATURES.md**
++- Multi-source configuration & precedence
++- Date folders (flat/nested) + custom formats
++- Text/JSONL/CSV/logfmt formatters
++- Rotation & retention (size/time + gzip)
++- Queue-based async logging
++- TRACE level support
++- Context-aware logging
++- Optional handlers: Syslog, GELF, OTLP
++
++**USAGE.md**
++- API examples (`configure`, `get_logger`, `get_context_logger`)
++- Adding per-module levels
++- Routing to specific handlers
++- Using environment overrides
++- Performance notes (queue, sampling)
++
++**CONFIG.md**
++- Full TOML schema (with defaults)
++- All handler/formatter options
++- Filename/path rules
++- Rotation/retention matrix
++- Validation errors & troubleshooting
++
++**CONTRIBUTING.md**
++- Dev setup, `uv/poetry` or `pipx`, pre-commit, ruff/black
++- Tests: pytest
++- Branching strategy & PR guidelines
++- Semantic commit examples
++
++**CHANGELOG.md**
++- Keep a Changelog format, SemVer
++
++**SECURITY.md**
++- How to report vulnerabilities
++
++**CODE_OF_CONDUCT.md**
++- Contributor Covenant
++
++---
++
++## Defaults (Best-Practice)
++- `paths`: `base_dir="logs"`, `date_folder_mode="flat"`, `date_format="%Y-%m-%d"`
++- `levels`: `root=INFO`, `enable_trace=true`
++- Handlers enabled by default: `console(INFO, text_default)` + `app_file(DEBUG, text_rich, size 5MB×10, retention 14d gzip)` + `json_trades(INFO, jsonl_struct, midnight rotation, retention 30d)`
++- Context enabled with recommended keys
++- Queue listener enabled
++
++---
++
++## Roadmap (MVP → v0.2 → v0.3)
++
++**MVP (v0.1.0)**
++- [x] Core: configure/load/merge schema
++- [x] Levels: TRACE
++- [x] Formatters: text, jsonl
++- [x] Handlers: console, file_rotating (size/time), retention (gzip)
++- [x] Paths & date folders (flat/nested)
++- [x] Context adapter + filter
++- [x] Async queue listener
++- [x] Stdlib compatibility block
++
++**v0.2.0 (this spec)**
++- [x] Filenames independent from format
++- [x] Additional formatters: csv, logfmt
++- [x] Optional handlers: syslog, gelf_udp, otlp (behind extra)
++- [x] Docs set for GitHub (outlined)
++- [x] Cleanup worker for retention
++
++**v0.3.x**
++- [ ] Redaction/masking rules (PII, API keys)
++- [ ] Sampling controls per level/handler
++- [ ] Structured context schemas per logger
++- [ ] OTLP exporter test matrix (OTel collector)
++- [ ] Benchmarks & perf guide
++
++---
++
++## Quality Gates (CI/CD)
++- Lint: ruff + black
++- Tests: pytest + coverage
++- Pre-commit hooks
++- Wheels build on tag; publish to TestPyPI → PyPI
++- Release notes from CHANGELOG
++
++---
++
++## Example Minimal pyproject.toml
++```toml
++[tool.podlog.paths]
++base_dir = "logs"
++date_folder_mode = "flat"
++
++[tool.podlog.handlers]
++enabled = ["console", "app_file"]
++
++[tool.podlog.handlers.console]
++type = "console"
++level = "INFO"
++formatter = "text_default"
++
++[tool.podlog.handlers.app_file]
++type = "file_rotating"
++level = "DEBUG"
++formatter = "text_rich"
++filename = "app.log"
++rotation = { mode = "size", max_bytes = 5000000, backup_count = 10 }
++retention = { days = 14, compress = true }
++
++[tool.podlog.formatters.text_default]
++type = "text"
++fmt = "%(asctime)s [%(levelname)s] %(name)s | %(message)s"
++
++[tool.podlog.formatters.text_rich]
++type = "text"
++fmt = "%(asctime)s [%(levelname)s] %(name)s [%(context)s] :: %(message)s"
++```
++
++---
++
++**Status**: Ready to scaffold code per this spec. If you sign off, next step is generating the repository skeleton and initial modules. 
++
+-- 
+2.43.0
+
+
+From 8d0e859f055650b1d85685967baad5854e1c4681 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 27 Oct 2025 13:01:38 +0000
+Subject: [PATCH 3/3] Add configurable logging core, tests, and docs
+
+## Summary
+- implement the new podlog core with schema-driven configuration, context adapters, async queue coordination, and retention-aware handlers
+- add pytest coverage for configuration precedence, formatter outputs, rotation, filters, and queue shutdown scenarios
+- document installation/usage/configuration, supply an example script, and wire up pre-commit plus CI and publish workflows
+
+## Testing
+- pytest
+---
+ .editorconfig                        |   9 +
+ .github/workflows/ci.yml             |  36 +++
+ .github/workflows/publish.yml        |  46 ++++
+ .gitignore                           |  15 ++
+ .pre-commit-config.yaml              |  11 +
+ CHANGELOG.md                         |  11 +
+ CODE_OF_CONDUCT.md                   |  13 ++
+ CONFIG.md                            | 143 ++++++++++++
+ CONTRIBUTING.md                      |  38 ++++
+ FEATURES.md                          |  37 +++
+ README.md                            |  93 +++++++-
+ SECURITY.md                          |  13 ++
+ USAGE.md                             | 108 +++++++++
+ examples/context_logging.py          |  36 +++
+ pyproject.toml                       |  48 ++++
+ src/podlog/__init__.py               |  11 +
+ src/podlog/api.py                    |  40 ++++
+ src/podlog/config/__init__.py        |   1 +
+ src/podlog/config/loader.py          | 139 ++++++++++++
+ src/podlog/config/schema.py          | 323 +++++++++++++++++++++++++++
+ src/podlog/core/context.py           | 147 ++++++++++++
+ src/podlog/core/levels.py            |  62 +++++
+ src/podlog/core/manager.py           | 188 ++++++++++++++++
+ src/podlog/core/registry.py          | 240 ++++++++++++++++++++
+ src/podlog/core/validation.py        |  48 ++++
+ src/podlog/formatters/csvfmt.py      |  56 +++++
+ src/podlog/formatters/jsonl.py       |  79 +++++++
+ src/podlog/formatters/logfmt.py      |  77 +++++++
+ src/podlog/formatters/text.py        |  27 +++
+ src/podlog/handlers/console.py       |  34 +++
+ src/podlog/handlers/file_rotating.py | 194 ++++++++++++++++
+ src/podlog/handlers/gelf_udp.py      |  51 +++++
+ src/podlog/handlers/null.py          |  13 ++
+ src/podlog/handlers/otlp.py          |  55 +++++
+ src/podlog/handlers/queue_async.py   |  83 +++++++
+ src/podlog/handlers/syslog.py        |  42 ++++
+ src/podlog/utils/paths.py            |  59 +++++
+ src/podlog/utils/time.py             |  13 ++
+ src/podlog/version.py                |   5 +
+ tests/conftest.py                    |  20 ++
+ tests/test_config_loader.py          |  43 ++++
+ tests/test_context_and_formatters.py |  59 +++++
+ tests/test_file_rotation.py          |  40 ++++
+ tests/test_filters_routing.py        |  52 +++++
+ tests/test_paths.py                  |  22 ++
+ tests/test_queue_async.py            |  42 ++++
+ 46 files changed, 2920 insertions(+), 2 deletions(-)
+ create mode 100644 .editorconfig
+ create mode 100644 .github/workflows/ci.yml
+ create mode 100644 .github/workflows/publish.yml
+ create mode 100644 .gitignore
+ create mode 100644 .pre-commit-config.yaml
+ create mode 100644 CHANGELOG.md
+ create mode 100644 CODE_OF_CONDUCT.md
+ create mode 100644 CONFIG.md
+ create mode 100644 CONTRIBUTING.md
+ create mode 100644 FEATURES.md
+ create mode 100644 SECURITY.md
+ create mode 100644 USAGE.md
+ create mode 100644 examples/context_logging.py
+ create mode 100644 pyproject.toml
+ create mode 100644 src/podlog/__init__.py
+ create mode 100644 src/podlog/api.py
+ create mode 100644 src/podlog/config/__init__.py
+ create mode 100644 src/podlog/config/loader.py
+ create mode 100644 src/podlog/config/schema.py
+ create mode 100644 src/podlog/core/context.py
+ create mode 100644 src/podlog/core/levels.py
+ create mode 100644 src/podlog/core/manager.py
+ create mode 100644 src/podlog/core/registry.py
+ create mode 100644 src/podlog/core/validation.py
+ create mode 100644 src/podlog/formatters/csvfmt.py
+ create mode 100644 src/podlog/formatters/jsonl.py
+ create mode 100644 src/podlog/formatters/logfmt.py
+ create mode 100644 src/podlog/formatters/text.py
+ create mode 100644 src/podlog/handlers/console.py
+ create mode 100644 src/podlog/handlers/file_rotating.py
+ create mode 100644 src/podlog/handlers/gelf_udp.py
+ create mode 100644 src/podlog/handlers/null.py
+ create mode 100644 src/podlog/handlers/otlp.py
+ create mode 100644 src/podlog/handlers/queue_async.py
+ create mode 100644 src/podlog/handlers/syslog.py
+ create mode 100644 src/podlog/utils/paths.py
+ create mode 100644 src/podlog/utils/time.py
+ create mode 100644 src/podlog/version.py
+ create mode 100644 tests/conftest.py
+ create mode 100644 tests/test_config_loader.py
+ create mode 100644 tests/test_context_and_formatters.py
+ create mode 100644 tests/test_file_rotation.py
+ create mode 100644 tests/test_filters_routing.py
+ create mode 100644 tests/test_paths.py
+ create mode 100644 tests/test_queue_async.py
+
+diff --git a/.editorconfig b/.editorconfig
+new file mode 100644
+index 0000000..cf80b4e
+--- /dev/null
++++ b/.editorconfig
+@@ -0,0 +1,9 @@
++root = true
++
++[*]
++charset = utf-8
++end_of_line = lf
++insert_final_newline = true
++indent_style = space
++indent_size = 4
++trim_trailing_whitespace = true
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..e35b225
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,36 @@
++name: CI
++
++on:
++  push:
++    branches: [main]
++  pull_request:
++
++jobs:
++  lint-and-test:
++    runs-on: ubuntu-latest
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++
++      - name: Set up Python
++        uses: actions/setup-python@v5
++        with:
++          python-version: '3.11'
++
++      - name: Install dependencies
++        run: |
++          python -m pip install --upgrade pip
++          pip install .
++          pip install pytest coverage pre-commit
++
++      - name: Run pre-commit
++        run: pre-commit run --all-files
++
++      - name: Run tests
++        run: pytest --cov=podlog --cov-report=xml
++
++      - name: Upload coverage
++        uses: actions/upload-artifact@v4
++        with:
++          name: coverage-xml
++          path: coverage.xml
+diff --git a/.github/workflows/publish.yml b/.github/workflows/publish.yml
+new file mode 100644
+index 0000000..00908af
+--- /dev/null
++++ b/.github/workflows/publish.yml
+@@ -0,0 +1,46 @@
++name: Publish
++
++on:
++  push:
++    tags:
++      - 'v*'
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: '3.11'
++      - name: Install build backend
++        run: |
++          python -m pip install --upgrade pip
++          pip install build
++      - name: Build artifacts
++        run: python -m build
++      - name: Upload artifact
++        uses: actions/upload-artifact@v4
++        with:
++          name: podlog-dist
++          path: dist/*
++
++  publish-testpypi:
++    needs: build
++    runs-on: ubuntu-latest
++    environment: release
++    permissions:
++      id-token: write
++      contents: read
++    steps:
++      - uses: actions/download-artifact@v4
++        with:
++          name: podlog-dist
++          path: dist
++      - name: Publish to TestPyPI
++        uses: pypa/gh-action-pypi-publish@release/v1
++        with:
++          repository-url: https://test.pypi.org/legacy/
++        env:
++          TWINE_USERNAME: __token__
++          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..252b5a1
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,15 @@
++__pycache__/
++*.py[cod]
++*.egg-info/
++.dist/
++build/
++.eggs/
++.mypy_cache/
++.pytest_cache/
++.coverage
++htmlcov/
++.env
++.venv
++.idea/
++.vscode/
++.DS_Store
+diff --git a/.pre-commit-config.yaml b/.pre-commit-config.yaml
+new file mode 100644
+index 0000000..71f2617
+--- /dev/null
++++ b/.pre-commit-config.yaml
+@@ -0,0 +1,11 @@
++repos:
++  - repo: https://github.com/psf/black
++    rev: 24.3.0
++    hooks:
++      - id: black
++  - repo: https://github.com/astral-sh/ruff-pre-commit
++    rev: v0.6.4
++    hooks:
++      - id: ruff
++        args: ["--fix"]
++      - id: ruff-format
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..b1c79fb
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,11 @@
++# Changelog
++
++## v0.1.0 (2025-10-27)
++
++- Initial public release of podlog.
++- Context-aware logging adapter with extras buffering and TRACE level support.
++- Structured formatters: text, JSONL, logfmt, and CSV.
++- Handler suite: console, rotating file, syslog, GELF UDP, OTLP (optional), queue async, null.
++- Declarative configuration loader with precedence (runtime, env, pyproject, local files, user config, defaults).
++- Rotation and retention policies with gzip compression and daily date folders.
++- pytest test suite covering configuration, formatting, rotation, filters, and async queue lifecycle.
+diff --git a/CODE_OF_CONDUCT.md b/CODE_OF_CONDUCT.md
+new file mode 100644
+index 0000000..902fa9d
+--- /dev/null
++++ b/CODE_OF_CONDUCT.md
+@@ -0,0 +1,13 @@
++# Code of Conduct
++
++We are dedicated to providing a welcoming, harassment-free experience for everyone. All participants are expected to follow these
++guidelines:
++
++1. Be respectful and inclusive. Assume positive intent and collaborate constructively.
++2. Do not engage in harassment, discrimination, or personal attacks.
++3. Respect differing viewpoints, experiences, and cultural backgrounds.
++4. Provide considerate and constructive feedback.
++5. Report incidents to the maintainers at support@podhq.example so concerns can be addressed promptly.
++
++Violations may result in temporary or permanent bans from project spaces. This policy applies to all project channels including
++GitHub issues, pull requests, discussions, and any synchronous communication related to the project.
+diff --git a/CONFIG.md b/CONFIG.md
+new file mode 100644
+index 0000000..9ce3b9a
+--- /dev/null
++++ b/CONFIG.md
+@@ -0,0 +1,143 @@
++# Configuration reference
++
++podlog consumes configuration from multiple layers. The effective structure is a dictionary equivalent to the following TOML
++schema. Each section is optional and merges with defaults.
++
++## `[paths]`
++
++| Key                | Type   | Default    | Description |
++|--------------------|--------|------------|-------------|
++| `base_dir`         | str    | `"logs"`   | Root directory for all log files. |
++| `date_folder_mode` | str    | `"nested"` | `"nested"` → `logs/YYYY/MM/DD/`, `"flat"` → `logs/YYYY-MM-DD/`. |
++| `date_format`      | str    | `%Y-%m-%d` | Used when `date_folder_mode = "flat"`. |
++
++## `[formatters]`
++
++Formatters are grouped by kind. The key after the kind names the formatter (`kind.name`).
++
++```toml
++[tool.podlog.formatters.text]
++default.show_extras = true
++app = { fmt = "%(message)s", datefmt = "%H:%M:%S" }
++
++[tool.podlog.formatters.jsonl]
++audit = { whitelist = ["user_id"] }
++
++[tool.podlog.formatters.logfmt]
++structured = { keys = ["context", "extra_kvs"] }
++
++[tool.podlog.formatters.csv]
++report = { fields = ["ts", "level", "message"], include_header = true }
++```
++
++## `[filters]`
++
++| Type    | Parameters                         | Notes |
++|---------|------------------------------------|-------|
++| `exact` | `level`                            | Only emit records at the exact level. |
++| `min`   | `level`                            | Emit records at or above the level. |
++| `levels`| `levels` (list of str/int levels)  | Allow-list arbitrary level numbers/names. |
++
++## `[handlers]`
++
++Each handler is configured under `tool.podlog.handlers.<name>` and must appear in the `enabled` array. Common options:
++
++- `type`: `console`, `file`, `syslog`, `gelf_udp`, `otlp`, or `null`.
++- `formatter`: name defined in `[formatters]` (`text.default`, `jsonl.audit`, ...).
++- `level`: minimum level for the handler.
++- `filters`: optional list of filter names.
++- `filename`: required for `file` handlers (relative to the resolved date folder).
++- `rotation.size`: `max_bytes`, `backup_count`.
++- `rotation.time`: `when`, `interval`, `backup_count`, `utc`.
++- `retention`: `max_files`, `max_days`, `compress`.
++- `encoding`, `delay`.
++
++Example:
++
++```toml
++[tool.podlog.handlers]
++enabled = ["console", "app_file", "alerts"]
++
++[tool.podlog.handlers.console]
++type = "console"
++formatter = "text.default"
++stream = "stdout"
++
++[tool.podlog.handlers.app_file]
++type = "file"
++filename = "app.log"
++formatter = "text.default"
++rotation.size.max_bytes = 10485760
++rotation.size.backup_count = 7
++retention.max_days = 14
++retention.compress = true
++
++[tool.podlog.handlers.alerts]
++type = "gelf_udp"
++host = "log.local"
++port = 12201
++```
++
++## `[logging]`
++
++- `root.level`: default level (falls back to `[levels].root`).
++- `root.handlers`: list of handler names attached to the root logger.
++- `loggers.<name>.level`: per-logger level.
++- `loggers.<name>.handlers`: handler names for the logger.
++- `loggers.<name>.propagate`: whether the logger propagates to its parent.
++- `disable_existing_loggers`: disable loggers not explicitly configured.
++- `capture_warnings`: redirect `warnings` module output to logging.
++
++## `[levels]`
++
++- `root`: base level used when `logging.root.level` is omitted.
++- `enable_trace`: set to `true` to register the TRACE level (numeric level 5).
++- `overrides`: mapping of logger name → level (applied even if the logger is not explicitly configured).
++
++## `[context]`
++
++- `enabled`: toggle context adapter enforcement when requesting context loggers.
++- `allowed_keys`: if non-empty, restricts context defaults to these keys.
++
++## `[async]`
++
++- `use_queue_listener`: enable async dispatch.
++- `queue_maxsize`: maximum queue length (`0` for unbounded).
++- `flush_interval_ms`: best-effort handler flush interval.
++- `graceful_shutdown_timeout_s`: maximum wait for flush thread.
++
++## Example `pyproject.toml`
++
++```toml
++[tool.podlog.paths]
++base_dir = "logs"
++date_folder_mode = "nested"
++
++[tool.podlog.formatters.text]
++default.show_extras = true
++
++[tool.podlog.handlers]
++enabled = ["console", "file"]
++
++[tool.podlog.handlers.console]
++type = "console"
++formatter = "text.default"
++stream = "stderr"
++
++[tool.podlog.handlers.file]
++type = "file"
++filename = "app.log"
++formatter = "text.default"
++rotation.size.max_bytes = 1048576
++rotation.size.backup_count = 5
++retention.max_days = 7
++
++[tool.podlog.logging.root]
++level = "INFO"
++handlers = ["console", "file"]
++
++[tool.podlog.async]
++use_queue_listener = true
++queue_maxsize = 500
++flush_interval_ms = 100
++```
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+new file mode 100644
+index 0000000..7182c87
+--- /dev/null
++++ b/CONTRIBUTING.md
+@@ -0,0 +1,38 @@
++# Contributing
++
++Thanks for your interest in improving podlog! We welcome bug reports, feature requests, and pull requests.
++
++## Getting started
++
++1. Fork the repository and create a feature branch.
++2. Install dependencies:
++   ```bash
++   python -m venv .venv
++   source .venv/bin/activate
++   pip install -e .[otlp]
++   pip install -r requirements-dev.txt  # if available
++   pre-commit install
++   ```
++3. Run the test suite and lint checks before pushing:
++   ```bash
++   pytest
++   pre-commit run --all-files
++   ```
++
++## Pull request guidelines
++
++- Keep commits focused and include tests for new behavior.
++- Update documentation (README, USAGE, CONFIG) when public APIs or configuration options change.
++- Ensure `pytest` passes and no type errors or lint warnings remain.
++- Describe your change clearly in the PR body and reference any relevant issues.
++
++## Code style
++
++- Follow the existing code conventions: type annotations where practical, descriptive names, and docstrings for modules.
++- Use `black`, `ruff`, and `isort` via the bundled pre-commit hooks to maintain consistency.
++- Avoid catching broad exceptions; prefer precise exception types.
++
++## Reporting issues
++
++Open an issue with a clear description, reproduction steps, and environment details (Python version, OS, podlog version). Include
++stack traces or configuration snippets where applicable.
+diff --git a/FEATURES.md b/FEATURES.md
+new file mode 100644
+index 0000000..467c2f3
+--- /dev/null
++++ b/FEATURES.md
+@@ -0,0 +1,37 @@
++# podlog features
++
++## Contextual logging
++
++- Persistent context dictionaries, string parsing, and runtime extras merged into the `LogRecord.extra` mapping.
++- Automatically rendered `context` and `extra_kvs` attributes usable by all formatters.
++- Adapter helpers: `set_context`, `add_context`, `clear_extra`, and `add_extra` with variable name inference.
++
++## Structured outputs
++
++- Human-readable text formatter with optional extra rendering and configurable format strings.
++- JSON Lines formatter that preserves non-standard attributes inside an `extra` object with whitelist support.
++- logfmt formatter for systems like Honeycomb, Grafana Loki, or vector-based pipelines.
++- CSV formatter with optional headers, column selection, and automatic timestamp formatting.
++
++## Handler ecosystem
++
++- Console and null handlers for development and testing workflows.
++- Date-aware rotating file handlers with size/time strategies, gzip compression, and retention pruning.
++- Syslog (UDP/TCP/unix), GELF UDP, and optional OTLP exporter integration for centralized logging systems.
++- Queue-based async coordinator that wraps handlers with blocking queue semantics to avoid record loss.
++
++## Smart defaults & configuration
++
++- Discovery order: runtime overrides → environment (`PODLOG__`) → `pyproject.toml` → local config files → user config dir → defaults.
++- Declarative TOML schema with path, formatter, handler, filter, logging, context, and async sections.
++- TRACE level (5) registration with optional enablement via configuration.
++- Filters: exact level match, minimum level threshold, and allow-list for arbitrary level sets.
++
++## Reliability & operations
++
++- Daily date folders keep logs organized by time while allowing rotation inside each day.
++- Retention policies measured in file count or days with automatic gzip compression of archives.
++- Async queue shutdown waits for in-flight records and flushes handler buffers on exit.
++- Test coverage for precedence rules, handler behaviors, formatting, filtering, and queue lifecycle.
++
++Consult [USAGE.md](USAGE.md) for code examples and [CONFIG.md](CONFIG.md) for schema details.
+diff --git a/README.md b/README.md
+index 4103523..d79fedf 100644
+--- a/README.md
++++ b/README.md
+@@ -1,2 +1,91 @@
+-# podLog
+-standalone, production-grade Python logging package that is fully compatible with logging in the standard library, with smart defaults, context-aware logging, multiple output formats (text/JSONL/logfmt/CSV), rotation/retention, and optional async dispatch
++# podlog
++
++**podlog** is a production-grade logging toolkit for Python that layers a modern configuration system, structured formatters, and
++sane defaults on top of the standard library's `logging` package. It keeps your logs contextual, routable, and safe to operate
++across multiple destinations with minimal boilerplate.
++
++## Key features
++
++- Context-aware adapters that automatically merge persistent context and per-call extras into every `LogRecord`.
++- Text, JSON Lines, logfmt, and CSV formatters with consistent field rendering.
++- Daily date-folder aware file handlers with size/time rotation, retention policies, and optional gzip compression.
++- Optional async dispatch via `QueueHandler`/`QueueListener` to protect critical paths from I/O stalls.
++- Configurable filters (exact, minimum, allow-list) and a handler registry for console, file, syslog, GELF, OTLP, and null sinks.
++- Declarative configuration discovery from runtime overrides, environment variables, project files, user config, and defaults.
++
++See [FEATURES.md](FEATURES.md) for a deeper tour of the platform capabilities.
++
++## Installation
++
++```bash
++pip install podlog
++```
++
++The package targets Python 3.9 and newer.
++
++## Quickstart
++
++```python
++import podlog
++
++# Discover configuration from pyproject.toml/env/user config and override at runtime
++podlog.configure(
++    {
++        "paths": {"base_dir": "logs", "date_folder_mode": "nested"},
++        "handlers": {
++            "enabled": ["app"],
++            "app": {
++                "type": "file",
++                "filename": "application.log",
++                "formatter": "text.default",
++                "level": "INFO",
++            },
++        },
++        "logging": {"root": {"level": "INFO", "handlers": ["app"]}},
++    }
++)
++
++log = podlog.get_context_logger("demo", service="billing", request_id="req-123")
++log.add_extra(customer_id="cust-456")
++log.info("invoiced customer")
++```
++
++Logs are emitted under `logs/YYYY/MM/DD/application.log` (or flat folders if configured) and include the context fields so that
++formatters, structured exporters, and search tools can reason about your application state.
++
++## Configuration
++
++podlog reads configuration in the following precedence order:
++
++1. Runtime overrides passed to `configure()`
++2. Environment variables prefixed with `PODLOG__`
++3. `[tool.podlog]` table in `pyproject.toml`
++4. `podlog.toml` or `podlog.yaml` in the project directory
++5. User config under the OS-specific config directory
++6. Built-in defaults
++
++The full schema and examples live in [CONFIG.md](CONFIG.md).
++
++## Additional documentation
++
++- [FEATURES.md](FEATURES.md) – high-level capability overview
++- [USAGE.md](USAGE.md) – API walkthroughs, context helpers, filters, and async dispatch
++- [CONFIG.md](CONFIG.md) – configuration schema reference with TOML examples
++- [examples/](examples/) – runnable snippets illustrating typical workflows
++
++## Development
++
++Clone the repository, create a virtual environment, and install the development dependencies:
++
++```bash
++pip install -e .[otlp]
++pip install -r requirements-dev.txt  # if you maintain a dev requirements file
++pre-commit install
++pytest
++```
++
++`pre-commit` enforces formatting and linting, while `pytest` exercises the full test suite.
++
++## License
++
++This project is released under the [MIT License](LICENSE).
+diff --git a/SECURITY.md b/SECURITY.md
+new file mode 100644
+index 0000000..6ee4aa4
+--- /dev/null
++++ b/SECURITY.md
+@@ -0,0 +1,13 @@
++# Security Policy
++
++## Supported versions
++
++The latest minor release of podlog receives security fixes. Older releases may receive fixes at the maintainers' discretion.
++
++## Reporting a vulnerability
++
++1. Email support@podhq.example with the subject line `SECURITY`.
++2. Include detailed reproduction steps, affected versions, and any relevant configuration snippets.
++3. We will acknowledge receipt within 3 business days and coordinate a timeline for remediation and disclosure.
++
++Please avoid opening public issues for security reports so that fixes can be prepared before disclosure.
+diff --git a/USAGE.md b/USAGE.md
+new file mode 100644
+index 0000000..3b05f5b
+--- /dev/null
++++ b/USAGE.md
+@@ -0,0 +1,108 @@
++# Usage guide
++
++## 1. Configuring podlog
++
++`podlog.configure()` discovers configuration sources automatically. You can override or provide an in-memory configuration by
++passing a dictionary that mirrors the TOML schema.
++
++```python
++import podlog
++
++podlog.configure(
++    {
++        "paths": {"base_dir": "logs", "date_folder_mode": "nested"},
++        "formatters": {
++            "text": {"app": {"show_extras": True}},
++            "jsonl": {"audit": {}},
++        },
++        "handlers": {
++            "enabled": ["text", "json"],
++            "text": {
++                "type": "file",
++                "filename": "app.log",
++                "formatter": "text.app",
++                "level": "INFO",
++            },
++            "json": {
++                "type": "file",
++                "filename": "audit.jsonl",
++                "formatter": "jsonl.audit",
++                "level": "INFO",
++                "rotation": {"size": {"max_bytes": 1_000_000, "backup_count": 5}},
++            },
++        },
++        "logging": {"root": {"level": "INFO", "handlers": ["text", "json"]}},
++    }
++)
++```
++
++Environment variables can override nested keys using double underscores, e.g. `PODLOG__PATHS__BASE_DIR=/var/log/app`.
++
++## 2. Working with context loggers
++
++```python
++log = podlog.get_context_logger("orders", service="checkout", region="us-east")
++log.add_context(env="prod")
++log.add_extra(order_id=1234, total=57.30)
++log.info("order processed")
++```
++
++- `set_context()` replaces the persistent context dictionary.
++- `add_context()` merges additional keys.
++- `add_extra()` accepts keyword arguments or positional variables, inferring names from the caller’s frame.
++- `clear_extra()` drops buffered extras after use.
++
++These helpers ensure `LogRecord.context` and `LogRecord.extra_kvs` exist for all formatters.
++
++## 3. Filters and routing
++
++Handlers can reference filters defined in configuration:
++
++```toml
++[tool.podlog.filters]
++warn_only.type = "min"
++warn_only.level = "WARNING"
++
++errors_only.type = "levels"
++errors_only.levels = ["ERROR", "CRITICAL"]
++
++[tool.podlog.handlers]
++enabled = ["warnings", "errors"]
++
++[tool.podlog.handlers.warnings]
++type = "file"
++filename = "warnings.log"
++formatter = "text.default"
++filters = ["warn_only"]
++
++[tool.podlog.handlers.errors]
++type = "file"
++filename = "errors.log"
++formatter = "text.default"
++filters = ["errors_only"]
++```
++
++## 4. Async queue dispatch
++
++Enable the queue listener in the `async` section:
++
++```toml
++[tool.podlog.async]
++use_queue_listener = true
++queue_maxsize = 1000
++flush_interval_ms = 250
++graceful_shutdown_timeout_s = 2.0
++```
++
++Each enabled handler is wrapped with a blocking `QueueHandler`; a background `QueueListener` drains records and flushes handlers at
++the configured interval. The queue coordinator shuts down gracefully when `GLOBAL_MANAGER.shutdown()` is invoked (called implicitly
++when reconfiguring via `podlog.configure`).
++
++## 5. Formatter options
++
++- `text`: `show_extras`, `fmt`, `datefmt`
++- `jsonl`: `whitelist`, `drop_fields`, `datefmt`
++- `logfmt`: `keys`, `datefmt`
++- `csv`: `fields`, `extra_fields`, `include_header`, `datefmt`
++
++See [CONFIG.md](CONFIG.md) for full option descriptions and examples.
+diff --git a/examples/context_logging.py b/examples/context_logging.py
+new file mode 100644
+index 0000000..5cd9296
+--- /dev/null
++++ b/examples/context_logging.py
+@@ -0,0 +1,36 @@
++"""Minimal example demonstrating podlog context logging."""
++
++from __future__ import annotations
++
++import time
++
++import podlog
++
++
++def main() -> None:
++    podlog.configure(
++        {
++            "paths": {"base_dir": "example-logs", "date_folder_mode": "flat"},
++            "formatters": {"text": {"demo": {"show_extras": True}}},
++            "handlers": {
++                "enabled": ["file"],
++                "file": {
++                    "type": "file",
++                    "filename": "example.log",
++                    "formatter": "text.demo",
++                    "level": "INFO",
++                },
++            },
++            "logging": {"root": {"level": "INFO", "handlers": ["file"]}},
++        }
++    )
++
++    logger = podlog.get_context_logger("examples.orders", app="podlog-demo", env="dev")
++    for order_id in range(1, 4):
++        logger.add_extra(order_id=order_id, total=order_id * 19.99)
++        logger.info("processed order")
++        time.sleep(0.1)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..d1a8eb8
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,48 @@
++[build-system]
++requires = ["setuptools>=68", "wheel"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "podlog"
++version = "0.1.0"
++description = "Production-grade logging toolkit with structured outputs and multiple sinks."
++readme = "README.md"
++authors = [{ name = "PodHQ", email = "support@podhq.example" }]
++license = { text = "MIT" }
++requires-python = ">=3.9"
++classifiers = [
++    "Programming Language :: Python :: 3",
++    "Programming Language :: Python :: 3.9",
++    "Programming Language :: Python :: 3.10",
++    "Programming Language :: Python :: 3.11",
++    "Programming Language :: Python :: 3.12",
++    "License :: OSI Approved :: MIT License",
++    "Operating System :: OS Independent",
++]
++dependencies = [
++    "platformdirs>=3.0",
++    "PyYAML>=6.0",
++    "tomli>=2.0; python_version < \"3.11\"",
++]
++
++[project.optional-dependencies]
++otlp = ["opentelemetry-sdk>=1.21.0"]
++
++[project.urls]
++Homepage = "https://github.com/podhq/podLog"
++Issues = "https://github.com/podhq/podLog/issues"
++
++[tool.setuptools.packages.find]
++where = ["src"]
++
++[tool.coverage.run]
++branch = true
++source = ["podlog"]
++omit = [
++    "tests/*",
++]
++
++[tool.pytest.ini_options]
++addopts = "-ra"
++testpaths = ["tests"]
++pythonpath = ["src"]
+diff --git a/src/podlog/__init__.py b/src/podlog/__init__.py
+new file mode 100644
+index 0000000..edbebd1
+--- /dev/null
++++ b/src/podlog/__init__.py
+@@ -0,0 +1,11 @@
++"""podlog public API."""
++
++from .api import configure, get_context_logger, get_logger
++from .version import __version__
++
++__all__ = [
++    "configure",
++    "get_logger",
++    "get_context_logger",
++    "__version__",
++]
+diff --git a/src/podlog/api.py b/src/podlog/api.py
+new file mode 100644
+index 0000000..c8b52e0
+--- /dev/null
++++ b/src/podlog/api.py
+@@ -0,0 +1,40 @@
++"""Public API surface for podlog."""
++
++from __future__ import annotations
++
++import logging
++from typing import Any, Dict
++
++from .config.loader import load_configuration
++from .core.manager import GLOBAL_MANAGER
++
++_CONFIGURED = False
++
++
++def configure(overrides: Dict[str, Any] | None = None) -> None:
++    """Configure podlog using the provided overrides."""
++
++    global _CONFIGURED
++    config = load_configuration(overrides or {})
++    GLOBAL_MANAGER.configure(config)
++    _CONFIGURED = True
++
++
++def _ensure_configured() -> None:
++    global _CONFIGURED
++    if not _CONFIGURED:
++        configure({})
++
++
++def get_logger(name: str) -> logging.Logger:
++    """Return a logger with the given name."""
++
++    _ensure_configured()
++    return GLOBAL_MANAGER.get_logger(name)
++
++
++def get_context_logger(name: str, **context_kv: Any):
++    """Return a context-aware logger carrying static key/value pairs."""
++
++    _ensure_configured()
++    return GLOBAL_MANAGER.get_context_logger(name, **context_kv)
+diff --git a/src/podlog/config/__init__.py b/src/podlog/config/__init__.py
+new file mode 100644
+index 0000000..e54db63
+--- /dev/null
++++ b/src/podlog/config/__init__.py
+@@ -0,0 +1 @@
++"""Configuration helpers for podlog."""
+diff --git a/src/podlog/config/loader.py b/src/podlog/config/loader.py
+new file mode 100644
+index 0000000..500f46b
+--- /dev/null
++++ b/src/podlog/config/loader.py
+@@ -0,0 +1,139 @@
++"""Configuration loading pipeline."""
++
++from __future__ import annotations
++
++import json
++import os
++from pathlib import Path
++from typing import Any, Dict, Mapping, MutableMapping
++
++from platformdirs import user_config_dir
++
++from .schema import PodlogConfig, build_config, default_config
++
++try:  # pragma: no cover
++    import tomllib  # type: ignore[attr-defined]
++except ModuleNotFoundError:  # pragma: no cover
++    import tomli as tomllib  # type: ignore[no-redef]
++
++try:  # pragma: no cover
++    import yaml
++except ModuleNotFoundError:  # pragma: no cover
++    yaml = None  # type: ignore[assignment]
++
++
++_ENV_PREFIX = "PODLOG__"
++
++
++def _load_toml(path: Path) -> Dict[str, Any]:
++    if not path.exists():
++        return {}
++    with path.open("rb") as fh:
++        return tomllib.load(fh)
++
++
++def _load_yaml(path: Path) -> Dict[str, Any]:
++    if yaml is None or not path.exists():
++        return {}
++    with path.open("r", encoding="utf-8") as fh:
++        data = yaml.safe_load(fh)
++    return data or {}
++
++
++def _merge(base: MutableMapping[str, Any], incoming: Mapping[str, Any]) -> MutableMapping[str, Any]:
++    for key, value in incoming.items():
++        if isinstance(value, Mapping) and isinstance(base.get(key), Mapping):
++            _merge(base[key], value)  # type: ignore[index]
++        else:
++            base[key] = value  # type: ignore[index]
++    return base
++
++
++def _load_user_config() -> Dict[str, Any]:
++    cfg_dir = Path(user_config_dir("podlog"))
++    if not cfg_dir.exists():
++        return {}
++    data: Dict[str, Any] = {}
++    for filename in ("podlog.toml", "podlog.yaml", "podlog.yml"):
++        payload = _load_toml(cfg_dir / filename) if filename.endswith(".toml") else _load_yaml(cfg_dir / filename)
++        if payload:
++            data = _merge(data or {}, payload)
++    return data
++
++
++def _load_local_config() -> Dict[str, Any]:
++    cwd = Path.cwd()
++    data: Dict[str, Any] = {}
++    for filename in ("podlog.toml", "podlog.yaml", "podlog.yml"):
++        path = cwd / filename
++        payload = _load_toml(path) if filename.endswith(".toml") else _load_yaml(path)
++        if payload:
++            data = _merge(data or {}, payload)
++    return data
++
++
++def _load_pyproject() -> Dict[str, Any]:
++    path = Path("pyproject.toml")
++    if not path.exists():
++        return {}
++    data = _load_toml(path)
++    tool = data.get("tool", {})
++    if not isinstance(tool, Mapping):
++        return {}
++    podlog = tool.get("podlog", {})
++    return podlog if isinstance(podlog, Mapping) else {}
++
++
++def _coerce_value(value: str) -> Any:
++    lowered = value.strip()
++    if lowered.lower() in {"true", "false"}:
++        return lowered.lower() == "true"
++    try:
++        return int(lowered)
++    except ValueError:
++        try:
++            return float(lowered)
++        except ValueError:
++            pass
++    if lowered.startswith("[") or lowered.startswith("{"):
++        try:
++            return json.loads(lowered)
++        except json.JSONDecodeError:
++            pass
++    return value
++
++
++def _env_config() -> Dict[str, Any]:
++    data: Dict[str, Any] = {}
++    for env_key, raw_value in os.environ.items():
++        if not env_key.startswith(_ENV_PREFIX):
++            continue
++        path = env_key[len(_ENV_PREFIX) :].split("__")
++        target = data
++        for segment in path[:-1]:
++            seg = segment.lower()
++            target = target.setdefault(seg, {})  # type: ignore[assignment]
++        target[path[-1].lower()] = _coerce_value(raw_value)
++    return data
++
++
++def _merge_overrides(*mappings: Mapping[str, Any]) -> Dict[str, Any]:
++    result: Dict[str, Any] = default_config()
++    for mapping in mappings:
++        if mapping:
++            _merge(result, mapping)
++    return result
++
++
++def load_configuration(overrides: Dict[str, Any] | None = None) -> PodlogConfig:
++    """Load configuration from supported sources in precedence order."""
++
++    overrides = overrides or {}
++    merged = _merge_overrides(
++        _load_user_config(),
++        _load_local_config(),
++        _load_pyproject(),
++        _env_config(),
++        overrides,
++    )
++    return build_config(merged)
+diff --git a/src/podlog/config/schema.py b/src/podlog/config/schema.py
+new file mode 100644
+index 0000000..21adc2c
+--- /dev/null
++++ b/src/podlog/config/schema.py
+@@ -0,0 +1,323 @@
++"""Configuration schema definition for podlog."""
++
++from __future__ import annotations
++
++from copy import deepcopy
++from dataclasses import dataclass, field
++from pathlib import Path
++from typing import Any, Dict, Iterable, List, Mapping, MutableMapping
++
++from ..handlers.queue_async import QueueConfig
++from ..utils.paths import DateFolderMode, DateFolderStrategy
++
++DEFAULT_CONFIG: Dict[str, Any] = {
++    "paths": {
++        "base_dir": "logs",
++        "date_folder_mode": "nested",
++        "date_format": "%Y-%m-%d",
++    },
++    "formatters": {
++        "text": {
++            "default": {"show_extras": False},
++        },
++        "jsonl": {
++            "default": {},
++        },
++        "logfmt": {
++            "default": {},
++        },
++        "csv": {
++            "default": {},
++        },
++    },
++    "filters": {},
++    "handlers": {
++        "enabled": ["console"],
++        "console": {
++            "type": "console",
++            "level": "INFO",
++            "formatter": "text.default",
++            "stream": "stderr",
++        },
++    },
++    "logging": {
++        "root": {
++            "level": "INFO",
++            "handlers": ["console"],
++        },
++        "loggers": {},
++        "disable_existing_loggers": False,
++        "force_config": False,
++        "incremental": False,
++        "capture_warnings": True,
++    },
++    "levels": {
++        "root": "INFO",
++        "enable_trace": False,
++        "overrides": {},
++    },
++    "async": {
++        "use_queue_listener": False,
++        "queue_maxsize": 1000,
++        "flush_interval_ms": 500,
++        "graceful_shutdown_timeout_s": 5.0,
++    },
++    "context": {
++        "enabled": True,
++        "allowed_keys": [],
++    },
++}
++
++
++def default_config() -> Dict[str, Any]:
++    """Return a deep copy of the default configuration mapping."""
++
++    return deepcopy(DEFAULT_CONFIG)
++
++
++@dataclass(slots=True)
++class PathsConfig:
++    base_dir: Path
++    date_folder_mode: DateFolderMode
++    date_format: str
++
++    @property
++    def base_path(self) -> Path:
++        return self.base_dir
++
++    def strategy(self) -> DateFolderStrategy:
++        return DateFolderStrategy(mode=self.date_folder_mode, date_format=self.date_format)
++
++
++@dataclass(slots=True)
++class FormatterSpec:
++    name: str
++    kind: str
++    options: Dict[str, Any] = field(default_factory=dict)
++
++
++@dataclass(slots=True)
++class FilterSpec:
++    name: str
++    kind: str
++    params: Dict[str, Any] = field(default_factory=dict)
++
++
++@dataclass(slots=True)
++class HandlerSpec:
++    name: str
++    kind: str
++    level: str | int
++    formatter: str
++    filters: List[str] = field(default_factory=list)
++    options: Dict[str, Any] = field(default_factory=dict)
++
++
++@dataclass(slots=True)
++class LoggerSpec:
++    name: str
++    level: str | int
++    handlers: List[str] = field(default_factory=list)
++    propagate: bool = False
++
++
++@dataclass(slots=True)
++class LevelsConfig:
++    root_level: str | int
++    enable_trace: bool
++    overrides: Dict[str, str | int] = field(default_factory=dict)
++
++
++@dataclass(slots=True)
++class ContextConfig:
++    enabled: bool = True
++    allowed_keys: List[str] = field(default_factory=list)
++
++
++@dataclass(slots=True)
++class PodlogConfig:
++    paths: PathsConfig
++    formatters: Dict[str, FormatterSpec]
++    filters: Dict[str, FilterSpec]
++    handlers: Dict[str, HandlerSpec]
++    handlers_enabled: List[str]
++    loggers: Dict[str, LoggerSpec]
++    root_logger: LoggerSpec
++    levels: LevelsConfig
++    async_config: QueueConfig
++    context: ContextConfig
++    capture_warnings: bool
++    disable_existing_loggers: bool
++    force_config: bool
++    incremental: bool
++    raw: Dict[str, Any] = field(repr=False)
++
++    def formatter(self, name: str) -> FormatterSpec:
++        return self.formatters[name]
++
++    def handler(self, name: str) -> HandlerSpec:
++        return self.handlers[name]
++
++    def logger(self, name: str) -> LoggerSpec:
++        return self.loggers[name]
++
++
++def _to_paths_config(data: Mapping[str, Any]) -> PathsConfig:
++    base_dir = Path(data.get("base_dir", "logs"))
++    mode = data.get("date_folder_mode", "nested")
++    date_format = data.get("date_format", "%Y-%m-%d")
++    return PathsConfig(base_dir=base_dir, date_folder_mode=mode, date_format=date_format)
++
++
++def _to_formatters(data: Mapping[str, Any]) -> Dict[str, FormatterSpec]:
++    specs: Dict[str, FormatterSpec] = {}
++    for kind, entries in data.items():
++        if not isinstance(entries, Mapping):
++            continue
++        for name, options in entries.items():
++            key = f"{kind}.{name}"
++            opts = dict(options or {}) if isinstance(options, Mapping) else {}
++            specs[key] = FormatterSpec(name=key, kind=kind, options=opts)
++    return specs
++
++
++def _to_filters(data: Mapping[str, Any]) -> Dict[str, FilterSpec]:
++    filters: Dict[str, FilterSpec] = {}
++    for name, payload in data.items():
++        if not isinstance(payload, Mapping):
++            continue
++        kind = str(payload.get("type", "min")).lower()
++        params = {k: v for k, v in payload.items() if k != "type"}
++        filters[name] = FilterSpec(name=name, kind=kind, params=params)
++    return filters
++
++
++def _to_handlers(data: Mapping[str, Any]) -> tuple[Dict[str, HandlerSpec], List[str]]:
++    handlers: Dict[str, HandlerSpec] = {}
++    enabled_raw = data.get("enabled")
++    enabled: List[str]
++    if isinstance(enabled_raw, list):
++        enabled = [str(item) for item in enabled_raw]
++    else:
++        enabled = []
++
++    for name, payload in data.items():
++        if name == "enabled" or not isinstance(payload, Mapping):
++            continue
++        kind = str(payload.get("type", "console"))
++        level = payload.get("level", "INFO")
++        formatter = payload.get("formatter", "text.default")
++        filters = [str(f) for f in payload.get("filters", [])] if "filters" in payload else []
++        options = {
++            key: value
++            for key, value in payload.items()
++            if key not in {"type", "level", "formatter", "filters"}
++        }
++        handlers[name] = HandlerSpec(
++            name=name,
++            kind=kind,
++            level=level,
++            formatter=str(formatter),
++            filters=filters,
++            options=dict(options),
++        )
++
++    if not enabled:
++        enabled = list(handlers.keys())
++    return handlers, enabled
++
++
++def _to_loggers(data: Mapping[str, Any]) -> tuple[LoggerSpec, Dict[str, LoggerSpec], bool, bool, bool, bool]:
++    root_data = data.get("root", {})
++    if not isinstance(root_data, Mapping):
++        root_data = {}
++    loggers_data = data.get("loggers", {})
++    if not isinstance(loggers_data, Mapping):
++        loggers_data = {}
++
++    disable_existing = bool(data.get("disable_existing_loggers", False))
++    force_config = bool(data.get("force_config", False))
++    incremental = bool(data.get("incremental", False))
++    capture_warnings = bool(data.get("capture_warnings", True))
++
++    def _build_logger(name: str, payload: Mapping[str, Any]) -> LoggerSpec:
++        level = payload.get("level", "INFO")
++        handlers = [str(h) for h in payload.get("handlers", [])]
++        propagate = bool(payload.get("propagate", False))
++        return LoggerSpec(name=name, level=level, handlers=handlers, propagate=propagate)
++
++    root_handlers = root_data.get("handlers")
++    root_handlers_list = [str(h) for h in root_handlers] if isinstance(root_handlers, list) else []
++    root_level = root_data.get("level", "INFO")
++    root_spec = LoggerSpec(name="root", level=root_level, handlers=root_handlers_list, propagate=False)
++
++    specs: Dict[str, LoggerSpec] = {}
++    for name, payload in loggers_data.items():
++        if isinstance(payload, Mapping):
++            specs[name] = _build_logger(name, payload)
++
++    return root_spec, specs, disable_existing, force_config, incremental, capture_warnings
++
++
++def _to_levels(data: Mapping[str, Any]) -> LevelsConfig:
++    root_level = data.get("root", "INFO")
++    enable_trace = bool(data.get("enable_trace", False))
++    overrides_raw = data.get("overrides", {})
++    overrides: Dict[str, str | int] = {}
++    if isinstance(overrides_raw, Mapping):
++        for name, value in overrides_raw.items():
++            overrides[name] = value
++    return LevelsConfig(root_level=root_level, enable_trace=enable_trace, overrides=overrides)
++
++
++def _to_async(data: Mapping[str, Any]) -> QueueConfig:
++    return QueueConfig(
++        use_queue_listener=bool(data.get("use_queue_listener", False)),
++        queue_maxsize=int(data.get("queue_maxsize", 1000)),
++        flush_interval_ms=int(data.get("flush_interval_ms", 500)),
++        graceful_shutdown_timeout_s=float(data.get("graceful_shutdown_timeout_s", 5.0)),
++    )
++
++
++def _to_context(data: Mapping[str, Any]) -> ContextConfig:
++    enabled = bool(data.get("enabled", True))
++    allowed_raw = data.get("allowed_keys", [])
++    if isinstance(allowed_raw, Mapping):
++        allowed = [str(item) for item in allowed_raw.keys()]
++    elif isinstance(allowed_raw, Iterable) and not isinstance(allowed_raw, (str, bytes)):
++        allowed = [str(item) for item in allowed_raw]
++    else:
++        allowed = []
++    return ContextConfig(enabled=enabled, allowed_keys=allowed)
++
++
++def build_config(data: Mapping[str, Any]) -> PodlogConfig:
++    paths = _to_paths_config(data.get("paths", {}))
++    formatters = _to_formatters(data.get("formatters", {}))
++    filters = _to_filters(data.get("filters", {}))
++    handlers, enabled = _to_handlers(data.get("handlers", {}))
++    root_logger, loggers, disable_existing, force_config, incremental, capture_warnings = _to_loggers(data.get("logging", {}))
++    levels = _to_levels(data.get("levels", {}))
++    async_config = _to_async(data.get("async", {}))
++    context = _to_context(data.get("context", {}))
++
++    if not root_logger.handlers:
++        root_logger.handlers = enabled.copy()
++
++    return PodlogConfig(
++        paths=paths,
++        formatters=formatters,
++        filters=filters,
++        handlers=handlers,
++        handlers_enabled=enabled,
++        loggers=loggers,
++        root_logger=root_logger,
++        levels=levels,
++        async_config=async_config,
++        context=context,
++        capture_warnings=capture_warnings,
++        disable_existing_loggers=disable_existing,
++        force_config=force_config,
++        incremental=incremental,
++        raw=deepcopy(data),
++    )
+diff --git a/src/podlog/core/context.py b/src/podlog/core/context.py
+new file mode 100644
+index 0000000..e355a65
+--- /dev/null
++++ b/src/podlog/core/context.py
+@@ -0,0 +1,147 @@
++"""Context-aware logging adapter and helpers."""
++
++from __future__ import annotations
++
++import inspect
++import json
++import logging
++from dataclasses import dataclass, field
++from typing import Any, Dict, Mapping, MutableMapping, Tuple
++
++from .levels import TRACE_LEVEL_NUM
++
++
++@dataclass(slots=True)
++class ContextState:
++    """Container for persistent context and buffered extras."""
++
++    context: Dict[str, Any] = field(default_factory=dict)
++    extras: Dict[str, Any] = field(default_factory=dict)
++
++    def context_string(self) -> str:
++        items = sorted(self.context.items(), key=lambda kv: kv[0])
++        return " ".join(f"{key}={value}" for key, value in items) if items else "-"
++
++    def extras_text(self, data: Mapping[str, Any]) -> str:
++        if not data:
++            return "-"
++        parts: list[str] = []
++        for key, value in data.items():
++            if key in {"context", "extra_kvs"}:
++                continue
++            try:
++                rendered = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
++            except Exception:
++                rendered = repr(value)
++            parts.append(f"{key}={rendered}")
++        return " ".join(parts)
++
++
++class ContextFilter(logging.Filter):
++    """Ensure context attributes exist on log records."""
++
++    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
++        record.__dict__.setdefault("context", "-")
++        record.__dict__.setdefault("extra_kvs", "-")
++        return True
++
++
++class ContextAdapter(logging.LoggerAdapter):
++    """Logger adapter that keeps persistent context and extras.
++
++    The adapter exposes helpers to manage state and inject the ``extra`` mapping
++    into ``LogRecord`` objects so formatters can access ``%(context)s`` and
++    ``%(extra_kvs)s`` placeholders.
++    """
++
++    def __init__(self, logger: logging.Logger, *, base_context: Mapping[str, Any] | None = None) -> None:
++        super().__init__(logger, {})
++        self._state = ContextState(context=dict(base_context or {}))
++
++    # -- Context management -------------------------------------------------
++    def set_context(self, ctx: Mapping[str, Any] | str) -> None:
++        if isinstance(ctx, str):
++            self._state.context = self._parse_ctx_string(ctx)
++        else:
++            self._state.context = dict(ctx)
++
++    def add_context(self, **kwargs: Any) -> None:
++        self._state.context.update(kwargs)
++
++    def clear_extra(self) -> None:
++        self._state.extras.clear()
++
++    def add_extra(self, *args: Any, **kwargs: Any) -> None:
++        for key, value in kwargs.items():
++            self._state.extras[key] = value
++
++        if not args:
++            return
++
++        frame = inspect.currentframe()
++        try:
++            caller = frame.f_back if frame else None
++            names_by_id: Dict[int, str] = {}
++            if caller is not None:
++                for name, value in caller.f_locals.items():
++                    names_by_id[id(value)] = name
++
++            used = set(self._state.extras.keys())
++            counter = 1
++            for value in args:
++                inferred = names_by_id.get(id(value))
++                if not inferred or inferred in used:
++                    while True:
++                        candidate = f"var{counter}"
++                        counter += 1
++                        if candidate not in used:
++                            inferred = candidate
++                            break
++                self._state.extras[inferred] = value
++                used.add(inferred)
++        finally:
++            del frame
++
++    # -- LoggingAdapter API -------------------------------------------------
++    def process(self, msg: str, kwargs: MutableMapping[str, Any]) -> Tuple[str, MutableMapping[str, Any]]:
++        call_extra = kwargs.get("extra")
++        merged: Dict[str, Any] = dict(self._state.extras)
++        if isinstance(call_extra, Mapping):
++            merged.update(call_extra)
++
++        merged["context"] = self._state.context_string()
++        merged["extra_kvs"] = self._state.extras_text(merged)
++        kwargs["extra"] = merged
++        return msg, kwargs
++
++    def trace(self, msg: str, *args: Any, **kwargs: Any) -> None:
++        if self.logger.isEnabledFor(TRACE_LEVEL_NUM):
++            self.log(TRACE_LEVEL_NUM, msg, *args, **kwargs)
++
++    # -- Helpers ------------------------------------------------------------
++    @staticmethod
++    def _parse_ctx_string(value: str) -> Dict[str, Any]:
++        result: Dict[str, Any] = {}
++        parts = [part for part in value.strip().split() if part]
++        for part in parts:
++            if "=" not in part:
++                continue
++            key, raw = part.split("=", 1)
++            result[key] = raw
++        return result or {"_ctx": value}
++
++
++def ensure_context_filter(logger: logging.Logger) -> None:
++    """Attach the :class:`ContextFilter` to ``logger`` if missing."""
++
++    for existing in logger.filters:
++        if isinstance(existing, ContextFilter):
++            return
++    logger.addFilter(ContextFilter())
++
++
++def inject_context(logger: logging.Logger, *, base_context: Mapping[str, Any] | None = None) -> ContextAdapter:
++    """Return a :class:`ContextAdapter` attached to ``logger`` with filter."""
++
++    ensure_context_filter(logger)
++    return ContextAdapter(logger, base_context=base_context)
+diff --git a/src/podlog/core/levels.py b/src/podlog/core/levels.py
+new file mode 100644
+index 0000000..aaa05e1
+--- /dev/null
++++ b/src/podlog/core/levels.py
+@@ -0,0 +1,62 @@
++"""Custom log level helpers."""
++
++from __future__ import annotations
++
++import logging
++from typing import Callable
++
++TRACE_LEVEL_NAME = "TRACE"
++TRACE_LEVEL_NUM = 5
++
++
++def register_trace_level(enable: bool = True) -> None:
++    """Register the TRACE level on the stdlib logging module.
++
++    When ``enable`` is ``False`` the function becomes a no-op. The level is
++    installed only once even if called repeatedly.
++    """
++
++    if not enable:
++        return
++
++    if logging.getLevelName(TRACE_LEVEL_NUM) != TRACE_LEVEL_NAME:
++        logging.addLevelName(TRACE_LEVEL_NUM, TRACE_LEVEL_NAME)
++    if not hasattr(logging, TRACE_LEVEL_NAME):
++        setattr(logging, TRACE_LEVEL_NAME, TRACE_LEVEL_NUM)
++
++    if not hasattr(logging.Logger, "trace"):
++        def trace(self: logging.Logger, message: str, *args: object, **kwargs: object) -> None:  # type: ignore[override]
++            if self.isEnabledFor(TRACE_LEVEL_NUM):
++                self._log(TRACE_LEVEL_NUM, message, args, **kwargs)
++
++        logging.Logger.trace = trace  # type: ignore[assignment]
++
++
++def get_level_by_name(name: str) -> int:
++    """Resolve a logging level from a friendly name."""
++
++    if name.upper() == TRACE_LEVEL_NAME:
++        return TRACE_LEVEL_NUM
++    if name.isdigit():
++        return int(name)
++    resolved = logging.getLevelName(name.upper())
++    if isinstance(resolved, int):
++        return resolved
++    return logging.INFO
++
++
++def ensure_level(value: int | str) -> int:
++    """Normalize user supplied level values."""
++
++    if isinstance(value, int):
++        return value
++    return get_level_by_name(value)
++
++
++def level_filter(level: int) -> Callable[[logging.LogRecord], bool]:
++    """Return a predicate that checks for a specific level."""
++
++    def predicate(record: logging.LogRecord) -> bool:
++        return record.levelno == level
++
++    return predicate
+diff --git a/src/podlog/core/manager.py b/src/podlog/core/manager.py
+new file mode 100644
+index 0000000..3937a1c
+--- /dev/null
++++ b/src/podlog/core/manager.py
+@@ -0,0 +1,188 @@
++"""Logging manager responsible for runtime configuration and lifecycle."""
++
++from __future__ import annotations
++
++import logging
++from typing import Dict, Set
++
++from ..config.schema import PodlogConfig
++from ..handlers.queue_async import QueueCoordinator
++from .context import inject_context
++from .levels import ensure_level, register_trace_level
++from .registry import build_filter, build_formatter, build_handler
++from .validation import validate_configuration
++
++
++class LogManager:
++    """Central coordinator for podlog configuration."""
++
++    def __init__(self) -> None:
++        self._config: PodlogConfig | None = None
++        self._handlers: Dict[str, logging.Handler] = {}
++        self._real_handlers: Dict[str, logging.Handler] = {}
++        self._coordinators: Dict[str, QueueCoordinator] = {}
++        self._configured_loggers: Set[str] = set()
++        self._formatters_cache: Dict[str, logging.Formatter] = {}
++        self._filters_cache: Dict[str, logging.Filter] = {}
++
++    # ------------------------------------------------------------------
++    def configure(self, config: PodlogConfig) -> None:
++        """Apply the supplied configuration."""
++
++        validate_configuration(config)
++        self._teardown()
++
++        self._config = config
++        register_trace_level(config.levels.enable_trace)
++        logging.captureWarnings(config.capture_warnings)
++
++        self._formatters_cache = {
++            name: build_formatter(spec) for name, spec in config.formatters.items()
++        }
++        self._filters_cache = {
++            name: build_filter(spec) for name, spec in config.filters.items()
++        }
++
++        self._real_handlers = {}
++        for name in config.handlers_enabled:
++            spec = config.handlers[name]
++            handler = build_handler(spec, config.paths)
++            handler.setLevel(ensure_level(spec.level))
++            formatter = self._formatters_cache[spec.formatter]
++            handler.setFormatter(formatter)
++            for filter_name in spec.filters:
++                handler.addFilter(self._filters_cache[filter_name])
++            self._real_handlers[name] = handler
++
++        self._handlers = {}
++        self._coordinators = {}
++        async_cfg = config.async_config if config.async_config.use_queue_listener else None
++        if async_cfg:
++            for name, handler in self._real_handlers.items():
++                coordinator = QueueCoordinator(config=async_cfg, handlers=[handler])
++                coordinator.start()
++                queue_handler = coordinator.handler()
++                queue_handler.setLevel(handler.level)
++                for filt in handler.filters:
++                    queue_handler.addFilter(filt)
++                self._coordinators[name] = coordinator
++                self._handlers[name] = queue_handler
++        else:
++            self._handlers = dict(self._real_handlers)
++
++        self._configured_loggers = set()
++        self._configure_root_logger()
++        self._configure_named_loggers()
++        self._apply_level_overrides()
++        if config.disable_existing_loggers:
++            self._disable_unconfigured_loggers()
++
++    # ------------------------------------------------------------------
++    def shutdown(self) -> None:
++        """Shutdown queue listeners and close handlers."""
++
++        self._teardown()
++        self._config = None
++
++    # ------------------------------------------------------------------
++    def get_logger(self, name: str) -> logging.Logger:
++        return logging.getLogger(name)
++
++    def get_context_logger(self, name: str, **context_kv: object) -> logging.LoggerAdapter:
++        logger = self.get_logger(name)
++        if self._config and not self._config.context.enabled:
++            base = {}
++        else:
++            base = dict(context_kv)
++            if self._config and self._config.context.allowed_keys:
++                allowed = set(self._config.context.allowed_keys)
++                base = {k: v for k, v in base.items() if k in allowed}
++        adapter = inject_context(logger, base_context=base)
++        return adapter
++
++    # ------------------------------------------------------------------
++    def _teardown(self) -> None:
++        handlers_to_remove = set(self._handlers.values()) | set(self._real_handlers.values())
++        if handlers_to_remove:
++            root_logger = logging.getLogger()
++            for handler in list(root_logger.handlers):
++                if handler in handlers_to_remove:
++                    root_logger.removeHandler(handler)
++            for logger_name in self._configured_loggers:
++                if logger_name == "root":
++                    continue
++                logger = logging.getLogger(logger_name)
++                for handler in list(logger.handlers):
++                    if handler in handlers_to_remove:
++                        logger.removeHandler(handler)
++
++        for coordinator in self._coordinators.values():
++            coordinator.stop()
++        self._coordinators.clear()
++
++        for handler in self._handlers.values():
++            try:
++                handler.flush()
++            except Exception:
++                pass
++            handler.close()
++
++        for handler in self._real_handlers.values():
++            try:
++                handler.flush()
++            except Exception:
++                pass
++            handler.close()
++
++        self._handlers.clear()
++        self._real_handlers.clear()
++        self._configured_loggers.clear()
++
++    def _configure_root_logger(self) -> None:
++        assert self._config is not None
++        root_logger = logging.getLogger()
++        root_logger.handlers = []
++        root_level = ensure_level(self._config.levels.root_level or self._config.root_logger.level)
++        root_logger.setLevel(root_level)
++        for handler_name in self._config.root_logger.handlers:
++            handler = self._handlers.get(handler_name)
++            if handler is not None:
++                root_logger.addHandler(handler)
++        root_logger.propagate = False
++        self._configured_loggers.add("root")
++
++    def _configure_named_loggers(self) -> None:
++        assert self._config is not None
++        for name, spec in self._config.loggers.items():
++            logger = logging.getLogger(name)
++            logger.handlers = []
++            level_value = spec.level
++            if name in self._config.levels.overrides:
++                level_value = self._config.levels.overrides[name]
++            logger.setLevel(ensure_level(level_value))
++            for handler_name in spec.handlers:
++                handler = self._handlers.get(handler_name)
++                if handler is not None:
++                    logger.addHandler(handler)
++            logger.propagate = spec.propagate
++            self._configured_loggers.add(name)
++
++    def _apply_level_overrides(self) -> None:
++        assert self._config is not None
++        for name, level in self._config.levels.overrides.items():
++            if name in self._config.loggers:
++                continue
++            logger = logging.getLogger(name)
++            logger.setLevel(ensure_level(level))
++
++    def _disable_unconfigured_loggers(self) -> None:
++        configured = set(self._configured_loggers)
++        manager = logging.getLogger().manager
++        for name in list(manager.loggerDict.keys()):
++            if not name or name in configured:
++                continue
++            logger = logging.getLogger(name)
++            logger.disabled = True
++
++
++GLOBAL_MANAGER = LogManager()
+diff --git a/src/podlog/core/registry.py b/src/podlog/core/registry.py
+new file mode 100644
+index 0000000..004e132
+--- /dev/null
++++ b/src/podlog/core/registry.py
+@@ -0,0 +1,240 @@
++"""Registry of formatter, handler, and filter builders."""
++
++from __future__ import annotations
++
++import logging
++import logging.handlers
++from typing import Any, Callable, Dict, Iterable
++
++from ..config.schema import FilterSpec, FormatterSpec, HandlerSpec, PathsConfig
++from ..formatters.csvfmt import CSVFormatter
++from ..formatters.jsonl import JSONLinesFormatter
++from ..formatters.logfmt import LogFmtFormatter
++from ..formatters.text import StructuredTextFormatter
++from ..handlers.console import ConsoleHandlerConfig, build_console_handler
++from ..handlers.file_rotating import (
++    FileHandlerConfig,
++    RetentionPolicy,
++    SizeRotation,
++    TimeRotation,
++    build_file_handler,
++)
++from ..handlers.gelf_udp import GELFUDPConfig, build_gelf_udp_handler
++from ..handlers.null import build_null_handler
++from ..handlers.otlp import OTLPConfig, build_otlp_handler
++from ..handlers.syslog import SyslogConfig, build_syslog_handler
++from .levels import ensure_level
++
++__all__ = [
++    "ExactLevelFilter",
++    "MinLevelFilter",
++    "LevelsAllowFilter",
++    "build_formatter",
++    "build_handler",
++    "build_filter",
++]
++
++
++class LevelsAllowFilter(logging.Filter):
++    """Allow only specific level numbers."""
++
++    def __init__(self, levels: Iterable[int]) -> None:
++        super().__init__()
++        self.levels = {level for level in levels}
++
++    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
++        return record.levelno in self.levels
++
++
++class MinLevelFilter(logging.Filter):
++    """Allow records at or above a minimum level."""
++
++    def __init__(self, minimum: int) -> None:
++        super().__init__()
++        self.minimum = minimum
++
++    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
++        return record.levelno >= self.minimum
++
++
++class ExactLevelFilter(logging.Filter):
++    """Allow only exact level matches."""
++
++    def __init__(self, level: int) -> None:
++        super().__init__()
++        self.level = level
++
++    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
++        return record.levelno == self.level
++
++
++FormatterBuilder = Callable[[FormatterSpec], logging.Formatter]
++HandlerBuilder = Callable[[HandlerSpec, PathsConfig], logging.Handler]
++FilterBuilder = Callable[[Dict[str, Any]], logging.Filter]
++
++
++def _build_text(spec: FormatterSpec) -> logging.Formatter:
++    return StructuredTextFormatter(**spec.options)
++
++
++def _build_jsonl(spec: FormatterSpec) -> logging.Formatter:
++    return JSONLinesFormatter(**spec.options)
++
++
++def _build_logfmt(spec: FormatterSpec) -> logging.Formatter:
++    return LogFmtFormatter(**spec.options)
++
++
++def _build_csv(spec: FormatterSpec) -> logging.Formatter:
++    return CSVFormatter(**spec.options)
++
++
++FORMATTER_BUILDERS: Dict[str, FormatterBuilder] = {
++    "text": _build_text,
++    "jsonl": _build_jsonl,
++    "logfmt": _build_logfmt,
++    "csv": _build_csv,
++}
++
++
++def build_formatter(spec: FormatterSpec) -> logging.Formatter:
++    builder = FORMATTER_BUILDERS.get(spec.kind)
++    if builder is None:
++        raise ValueError(f"Unknown formatter kind: {spec.kind}")
++    return builder(spec)
++
++
++def _build_file_handler(spec: HandlerSpec, paths: PathsConfig) -> logging.Handler:
++    filename = spec.options.get("filename")
++    if not filename:
++        raise ValueError(f"Handler '{spec.name}' of type 'file' requires a filename")
++
++    rotation_cfg = spec.options.get("rotation", {})
++    size_rotation = None
++    time_rotation = None
++    if isinstance(rotation_cfg, dict):
++        size_options = rotation_cfg.get("size")
++        if isinstance(size_options, dict):
++            size_rotation = SizeRotation(
++                max_bytes=int(size_options.get("max_bytes", 10_000_000)),
++                backup_count=int(size_options.get("backup_count", 5)),
++            )
++        time_options = rotation_cfg.get("time")
++        if isinstance(time_options, dict):
++            time_rotation = TimeRotation(
++                when=str(time_options.get("when", "midnight")),
++                interval=int(time_options.get("interval", 1)),
++                backup_count=int(time_options.get("backup_count", 7)),
++                utc=bool(time_options.get("utc", False)),
++            )
++
++    retention_cfg = spec.options.get("retention", {})
++    if isinstance(retention_cfg, dict):
++        retention = RetentionPolicy(
++            max_files=int(retention_cfg.get("max_files")) if retention_cfg.get("max_files") is not None else None,
++            max_days=int(retention_cfg.get("max_days")) if retention_cfg.get("max_days") is not None else None,
++            compress=bool(retention_cfg.get("compress", False)),
++        )
++    else:
++        retention = RetentionPolicy()
++
++    encoding = spec.options.get("encoding")
++    delay = bool(spec.options.get("delay", False))
++    config = FileHandlerConfig(
++        base_dir=paths.base_path,
++        filename=str(filename),
++        strategy=paths.strategy(),
++        encoding=str(encoding) if encoding else None,
++        size_rotation=size_rotation,
++        time_rotation=time_rotation,
++        retention=retention,
++        delay=delay,
++    )
++    return build_file_handler(config)
++
++
++def _build_console_handler(spec: HandlerSpec, paths: PathsConfig) -> logging.Handler:
++    cfg = ConsoleHandlerConfig(stream=spec.options.get("stream", "stderr"))
++    return build_console_handler(cfg)
++
++
++def _build_syslog_handler(spec: HandlerSpec, paths: PathsConfig) -> logging.Handler:
++    cfg = SyslogConfig(
++        address=spec.options.get("address", ("localhost", 514)),
++        facility=int(
++            spec.options.get("facility", logging.handlers.SysLogHandler.LOG_USER)
++        ),
++        socktype=spec.options.get("socktype"),
++    )
++    return build_syslog_handler(cfg)
++
++
++def _build_gelf_handler(spec: HandlerSpec, paths: PathsConfig) -> logging.Handler:
++    cfg = GELFUDPConfig(
++        host=str(spec.options.get("host", "localhost")),
++        port=int(spec.options.get("port", 12201)),
++    )
++    return build_gelf_udp_handler(cfg)
++
++
++def _build_otlp_handler(spec: HandlerSpec, paths: PathsConfig) -> logging.Handler:
++    cfg = OTLPConfig(
++        endpoint=spec.options.get("endpoint"),
++        insecure=bool(spec.options.get("insecure", False)),
++        headers=spec.options.get("headers"),
++        timeout=spec.options.get("timeout"),
++        resource=spec.options.get("resource"),
++        logger_name=str(spec.options.get("logger_name", "podlog")),
++    )
++    return build_otlp_handler(cfg)
++
++
++def _build_null_handler(spec: HandlerSpec, paths: PathsConfig) -> logging.Handler:
++    return build_null_handler()
++
++
++HANDLER_BUILDERS: Dict[str, HandlerBuilder] = {
++    "file": _build_file_handler,
++    "console": _build_console_handler,
++    "syslog": _build_syslog_handler,
++    "gelf_udp": _build_gelf_handler,
++    "otlp": _build_otlp_handler,
++    "null": _build_null_handler,
++}
++
++
++def build_handler(spec: HandlerSpec, paths: PathsConfig) -> logging.Handler:
++    builder = HANDLER_BUILDERS.get(spec.kind)
++    if builder is None:
++        raise ValueError(f"Unknown handler kind: {spec.kind}")
++    return builder(spec, paths)
++
++
++def _build_exact(params: Dict[str, Any]) -> logging.Filter:
++    level = ensure_level(params.get("level", logging.INFO))
++    return ExactLevelFilter(level)
++
++
++def _build_min(params: Dict[str, Any]) -> logging.Filter:
++    level = ensure_level(params.get("level", logging.INFO))
++    return MinLevelFilter(level)
++
++
++def _build_levels(params: Dict[str, Any]) -> logging.Filter:
++    raw_levels = params.get("levels", [])
++    levels = [ensure_level(value) for value in raw_levels]
++    return LevelsAllowFilter(levels)
++
++
++FILTER_BUILDERS: Dict[str, FilterBuilder] = {
++    "exact": _build_exact,
++    "min": _build_min,
++    "levels": _build_levels,
++}
++
++
++def build_filter(spec: FilterSpec) -> logging.Filter:
++    builder = FILTER_BUILDERS.get(spec.kind)
++    if builder is None:
++        raise ValueError(f"Unknown filter kind: {spec.kind}")
++    return builder(spec.params)
+diff --git a/src/podlog/core/validation.py b/src/podlog/core/validation.py
+new file mode 100644
+index 0000000..3cbf0e6
+--- /dev/null
++++ b/src/podlog/core/validation.py
+@@ -0,0 +1,48 @@
++"""Configuration validation helpers."""
++
++from __future__ import annotations
++
++from ..config.schema import PodlogConfig
++
++
++class ConfigurationError(ValueError):
++    """Raised when configuration validation fails."""
++
++
++def validate_configuration(config: PodlogConfig) -> None:
++    """Ensure configuration references are consistent."""
++
++    missing_handlers = [name for name in config.handlers_enabled if name not in config.handlers]
++    if missing_handlers:
++        raise ConfigurationError(
++            f"Handlers referenced in 'enabled' but undefined: {', '.join(missing_handlers)}"
++        )
++
++    if not config.handlers_enabled:
++        raise ConfigurationError("At least one handler must be enabled")
++
++    enabled_set = set(config.handlers_enabled)
++
++    for handler in config.handlers.values():
++        if handler.formatter not in config.formatters:
++            raise ConfigurationError(f"Handler '{handler.name}' references unknown formatter '{handler.formatter}'")
++        for filter_name in handler.filters:
++            if filter_name not in config.filters:
++                raise ConfigurationError(f"Handler '{handler.name}' references unknown filter '{filter_name}'")
++
++    for handler_name in config.root_logger.handlers:
++        if handler_name not in config.handlers:
++            raise ConfigurationError(f"Root logger references unknown handler '{handler_name}'")
++        if handler_name not in enabled_set:
++            raise ConfigurationError(
++                f"Root logger references handler '{handler_name}' which is not enabled"
++            )
++
++    for logger in config.loggers.values():
++        for handler_name in logger.handlers:
++            if handler_name not in config.handlers:
++                raise ConfigurationError(f"Logger '{logger.name}' references unknown handler '{handler_name}'")
++            if handler_name not in enabled_set:
++                raise ConfigurationError(
++                    f"Logger '{logger.name}' references handler '{handler_name}' which is not enabled"
++                )
+diff --git a/src/podlog/formatters/csvfmt.py b/src/podlog/formatters/csvfmt.py
+new file mode 100644
+index 0000000..0c82c4a
+--- /dev/null
++++ b/src/podlog/formatters/csvfmt.py
+@@ -0,0 +1,56 @@
++"""CSV formatter for podlog."""
++
++from __future__ import annotations
++
++import csv
++import io
++import logging
++from typing import Iterable, Sequence
++
++__all__ = ["CSVFormatter"]
++
++_DEFAULT_FIELDS = ("ts", "level", "name", "context", "message")
++
++
++class CSVFormatter(logging.Formatter):
++    """Formatter that renders records as CSV rows."""
++
++    def __init__(
++        self,
++        *,
++        fields: Sequence[str] | None = None,
++        extra_fields: Iterable[str] | None = None,
++        include_header: bool = False,
++        datefmt: str | None = "%Y-%m-%dT%H:%M:%S%z",
++    ) -> None:
++        super().__init__(datefmt=datefmt)
++        self.fields = tuple(fields or _DEFAULT_FIELDS)
++        self.extra_fields = list(extra_fields or [])
++        self.include_header = include_header
++        self._header_emitted = False
++
++    def _value_for(self, record: logging.LogRecord, field: str) -> str:
++        if field == "ts":
++            return self.formatTime(record, self.datefmt)
++        if field == "level":
++            return record.levelname
++        if field == "name":
++            return record.name
++        if field == "message":
++            return record.getMessage()
++        return str(getattr(record, field, ""))
++
++    def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
++        buffer = io.StringIO()
++        writer = csv.writer(buffer)
++
++        if self.include_header and not self._header_emitted:
++            writer.writerow([*self.fields, *self.extra_fields])
++            self._header_emitted = True
++
++        row = [self._value_for(record, field) for field in self.fields]
++        data = record.__dict__
++        row.extend(str(data.get(field, "")) for field in self.extra_fields)
++        writer.writerow(row)
++
++        return buffer.getvalue().strip("\n")
+diff --git a/src/podlog/formatters/jsonl.py b/src/podlog/formatters/jsonl.py
+new file mode 100644
+index 0000000..6ce5c33
+--- /dev/null
++++ b/src/podlog/formatters/jsonl.py
+@@ -0,0 +1,79 @@
++"""JSON Lines formatter."""
++
++from __future__ import annotations
++
++import json
++import logging
++from typing import Any, Iterable, MutableMapping
++
++__all__ = ["JSONLinesFormatter"]
++
++_STANDARD_ATTRS = {
++    "name",
++    "msg",
++    "args",
++    "levelname",
++    "levelno",
++    "pathname",
++    "filename",
++    "module",
++    "exc_info",
++    "exc_text",
++    "stack_info",
++    "lineno",
++    "funcName",
++    "created",
++    "msecs",
++    "relativeCreated",
++    "thread",
++    "threadName",
++    "processName",
++    "process",
++    "asctime",
++    "context",
++    "extra_kvs",
++}
++
++
++class JSONLinesFormatter(logging.Formatter):
++    """Emit structured records as one JSON object per line."""
++
++    def __init__(
++        self,
++        *,
++        whitelist: Iterable[str] | None = None,
++        drop_fields: Iterable[str] | None = None,
++        datefmt: str | None = "%Y-%m-%dT%H:%M:%S%z",
++    ) -> None:
++        super().__init__(datefmt=datefmt)
++        self.whitelist = list(whitelist or [])
++        self.drop_fields = set(drop_fields or [])
++
++    def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
++        payload: MutableMapping[str, Any] = {
++            "ts": self.formatTime(record, self.datefmt),
++            "level": record.levelname,
++            "name": record.name,
++            "message": record.getMessage(),
++        }
++        if hasattr(record, "context"):
++            payload["context"] = getattr(record, "context")
++
++        extra: dict[str, Any]
++        data = record.__dict__
++        if self.whitelist:
++            extra = {key: data[key] for key in self.whitelist if key in data}
++        else:
++            extra = {
++                key: value
++                for key, value in data.items()
++                if key not in _STANDARD_ATTRS and key not in self.drop_fields
++            }
++
++        if extra:
++            payload["extra"] = extra
++
++        if record.exc_info:
++            payload["exc_info"] = self.formatException(record.exc_info)
++
++        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+diff --git a/src/podlog/formatters/logfmt.py b/src/podlog/formatters/logfmt.py
+new file mode 100644
+index 0000000..9ef449f
+--- /dev/null
++++ b/src/podlog/formatters/logfmt.py
+@@ -0,0 +1,77 @@
++"""logfmt formatter implementation."""
++
++from __future__ import annotations
++
++import logging
++from typing import Any, Iterable, Mapping
++
++__all__ = ["LogFmtFormatter"]
++
++
++def _escape(value: Any) -> str:
++    text = str(value)
++    if not text:
++        return '""'
++    if any(ch.isspace() for ch in text) or "=" in text or "\"" in text:
++        escaped = text.replace("\"", "\\\"")
++        return f'"{escaped}"'
++    return text
++
++
++class LogFmtFormatter(logging.Formatter):
++    """Render records into logfmt (key=value) form."""
++
++    def __init__(self, *, keys: Iterable[str] | None = None, datefmt: str | None = "%Y-%m-%dT%H:%M:%S%z") -> None:
++        super().__init__(datefmt=datefmt)
++        self.extra_keys = list(keys or [])
++
++    def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
++        parts = [
++            f"ts={_escape(self.formatTime(record, self.datefmt))}",
++            f"level={_escape(record.levelname)}",
++            f"logger={_escape(record.name)}",
++            f"msg={_escape(record.getMessage())}",
++        ]
++        context = getattr(record, "context", None)
++        if context:
++            parts.append(f"context={_escape(context)}")
++
++        data: Mapping[str, Any] = record.__dict__
++        extra_keys = self.extra_keys or [
++            key
++            for key in data.keys()
++            if key not in {
++                "name",
++                "msg",
++                "args",
++                "levelname",
++                "levelno",
++                "pathname",
++                "filename",
++                "module",
++                "exc_info",
++                "exc_text",
++                "stack_info",
++                "lineno",
++                "funcName",
++                "created",
++                "msecs",
++                "relativeCreated",
++                "thread",
++                "threadName",
++                "processName",
++                "process",
++                "asctime",
++                "context",
++                "extra_kvs",
++            }
++        ]
++
++        for key in extra_keys:
++            if key in data:
++                parts.append(f"{key}={_escape(data[key])}")
++
++        if record.exc_info:
++            parts.append(f"exc={_escape(self.formatException(record.exc_info))}")
++
++        return " ".join(parts)
+diff --git a/src/podlog/formatters/text.py b/src/podlog/formatters/text.py
+new file mode 100644
+index 0000000..36ab534
+--- /dev/null
++++ b/src/podlog/formatters/text.py
+@@ -0,0 +1,27 @@
++"""Human readable text formatter with context awareness."""
++
++from __future__ import annotations
++
++import logging
++
++__all__ = ["StructuredTextFormatter"]
++
++_DEFAULT_FMT = "%(asctime)s | %(levelname)-5s | %(name)s | %(context)s | %(message)s"
++_DEFAULT_FMT_WITH_EXTRAS = "%(asctime)s | %(levelname)-5s | %(name)s | %(context)s | %(message)s | %(extra_kvs)s"
++
++
++class StructuredTextFormatter(logging.Formatter):
++    """Formatter that ensures context/extra fields are displayed."""
++
++    def __init__(self, *, show_extras: bool = False, fmt: str | None = None, datefmt: str | None = "%Y-%m-%d %H:%M:%S") -> None:
++        final_fmt = fmt or (_DEFAULT_FMT_WITH_EXTRAS if show_extras else _DEFAULT_FMT)
++        super().__init__(final_fmt, datefmt=datefmt)
++        self.show_extras = show_extras
++
++    def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
++        record.__dict__.setdefault("context", "-")
++        if self.show_extras:
++            record.__dict__.setdefault("extra_kvs", "-")
++        else:
++            record.__dict__.setdefault("extra_kvs", "")
++        return super().format(record)
+diff --git a/src/podlog/handlers/console.py b/src/podlog/handlers/console.py
+new file mode 100644
+index 0000000..327652e
+--- /dev/null
++++ b/src/podlog/handlers/console.py
+@@ -0,0 +1,34 @@
++"""Console handler helpers."""
++
++from __future__ import annotations
++
++import logging
++import sys
++from dataclasses import dataclass
++from typing import Any
++
++__all__ = ["ConsoleHandlerConfig", "build_console_handler"]
++
++
++@dataclass(slots=True)
++class ConsoleHandlerConfig:
++    """Configuration for console handlers."""
++
++    stream: str = "stderr"
++    level: int = logging.INFO
++
++
++def build_console_handler(config: ConsoleHandlerConfig | None = None) -> logging.Handler:
++    """Construct a :class:`logging.StreamHandler` based on ``config``."""
++
++    cfg = config or ConsoleHandlerConfig()
++    stream: Any
++    if cfg.stream == "stdout":
++        stream = sys.stdout
++    elif cfg.stream == "stderr":
++        stream = sys.stderr
++    else:
++        stream = None
++    handler = logging.StreamHandler(stream=stream)
++    handler.setLevel(cfg.level)
++    return handler
+diff --git a/src/podlog/handlers/file_rotating.py b/src/podlog/handlers/file_rotating.py
+new file mode 100644
+index 0000000..f8c8faa
+--- /dev/null
++++ b/src/podlog/handlers/file_rotating.py
+@@ -0,0 +1,194 @@
++"""File handlers with rotation and retention support."""
++
++from __future__ import annotations
++
++import gzip
++from dataclasses import dataclass, field
++from datetime import datetime
++from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
++from pathlib import Path
++
++from ..utils.paths import DateFolderStrategy, build_log_path
++from ..utils.time import utcnow
++
++__all__ = [
++    "SizeRotation",
++    "TimeRotation",
++    "RetentionPolicy",
++    "FileHandlerConfig",
++    "build_file_handler",
++]
++
++
++@dataclass(slots=True)
++class SizeRotation:
++    """Configure size-based rotation."""
++
++    max_bytes: int
++    backup_count: int = 5
++
++
++@dataclass(slots=True)
++class TimeRotation:
++    """Configure time-based rotation."""
++
++    when: str = "midnight"
++    interval: int = 1
++    backup_count: int = 7
++    utc: bool = False
++
++
++@dataclass(slots=True)
++class RetentionPolicy:
++    """Retention rules for rotated files."""
++
++    max_files: int | None = None
++    max_days: int | None = None
++    compress: bool = False
++
++    def apply(self, directory: Path, stem: str) -> None:
++        if not directory.exists():
++            return
++        candidates = sorted(
++            (path for path in directory.iterdir() if path.name.startswith(stem) and path.name != stem),
++            key=lambda p: p.stat().st_mtime,
++            reverse=True,
++        )
++
++        if self.max_files is not None and self.max_files >= 0:
++            for path in candidates[self.max_files :]:
++                path.unlink(missing_ok=True)
++
++        if self.max_days is not None and self.max_days >= 0:
++            cutoff = utcnow().timestamp() - (self.max_days * 86400)
++            for path in candidates:
++                if path.stat().st_mtime < cutoff:
++                    path.unlink(missing_ok=True)
++
++
++@dataclass(slots=True)
++class FileHandlerConfig:
++    """Aggregate configuration for file handlers."""
++
++    base_dir: Path
++    filename: str
++    strategy: DateFolderStrategy
++    encoding: str | None = "utf-8"
++    size_rotation: SizeRotation | None = None
++    time_rotation: TimeRotation | None = None
++    retention: RetentionPolicy = field(default_factory=RetentionPolicy)
++    delay: bool = False
++
++    def __post_init__(self) -> None:
++        if self.size_rotation and self.time_rotation:
++            raise ValueError("Only one rotation strategy may be configured")
++        if not self.size_rotation and not self.time_rotation:
++            # Default to size rotation 10MB/5 files
++            self.size_rotation = SizeRotation(max_bytes=10_000_000, backup_count=5)
++
++
++class _DateAwareMixin:
++    def __init__(self, *, config: FileHandlerConfig) -> None:
++        self._config = config
++        self._stem = config.filename
++        self._current_dir = Path()
++        self._update_path(moment=utcnow())
++
++    def _resolve_path(self, moment: datetime) -> Path:
++        return build_log_path(
++            self._config.base_dir,
++            self._config.filename,
++            strategy=self._config.strategy,
++            moment=moment,
++        )
++
++    def _update_path(self, moment: datetime) -> None:
++        target = self._resolve_path(moment)
++        directory = target.parent
++        directory.mkdir(parents=True, exist_ok=True)
++        if getattr(self, "baseFilename", "") != str(target):
++            self.baseFilename = str(target)
++            if getattr(self, "stream", None):
++                self.stream.close()
++                self.stream = self._open()
++        self._current_dir = directory
++
++    def _apply_retention(self) -> None:
++        self._config.retention.apply(self._current_dir, self._config.filename)
++
++
++class DateAwareRotatingFileHandler(_DateAwareMixin, RotatingFileHandler):
++    def __init__(self, *, config: FileHandlerConfig) -> None:
++        initial_path = build_log_path(config.base_dir, config.filename, strategy=config.strategy, moment=utcnow())
++        rot = config.size_rotation or SizeRotation(max_bytes=10_000_000, backup_count=5)
++        RotatingFileHandler.__init__(
++            self,
++            filename=initial_path,
++            maxBytes=rot.max_bytes,
++            backupCount=rot.backup_count,
++            encoding=config.encoding,
++            delay=config.delay,
++        )
++        _DateAwareMixin.__init__(self, config=config)
++
++    def emit(self, record: logging.LogRecord) -> None:  # type: ignore[override]
++        self._update_path(datetime.fromtimestamp(record.created))
++        super().emit(record)
++
++    def doRollover(self) -> None:  # type: ignore[override]
++        super().doRollover()
++        if self._config.retention.compress:
++            first_archive = Path(f"{self.baseFilename}.1")
++            if first_archive.exists():
++                self._compress(first_archive)
++        self._apply_retention()
++
++    def _compress(self, path: Path) -> None:
++        target = path.with_suffix(path.suffix + ".gz")
++        with path.open("rb") as src, gzip.open(target, "wb") as dst:
++            dst.writelines(src)
++        path.unlink(missing_ok=True)
++
++
++class DateAwareTimedRotatingFileHandler(_DateAwareMixin, TimedRotatingFileHandler):
++    def __init__(self, *, config: FileHandlerConfig) -> None:
++        moment = utcnow()
++        initial_path = build_log_path(config.base_dir, config.filename, strategy=config.strategy, moment=moment)
++        rot = config.time_rotation or TimeRotation()
++        TimedRotatingFileHandler.__init__(
++            self,
++            filename=initial_path,
++            when=rot.when,
++            interval=rot.interval,
++            backupCount=rot.backup_count,
++            encoding=config.encoding,
++            delay=config.delay,
++            utc=rot.utc,
++        )
++        _DateAwareMixin.__init__(self, config=config)
++
++    def emit(self, record: logging.LogRecord) -> None:  # type: ignore[override]
++        self._update_path(datetime.fromtimestamp(record.created))
++        super().emit(record)
++
++    def doRollover(self) -> None:  # type: ignore[override]
++        super().doRollover()
++        if self._config.retention.compress:
++            first_archive = Path(f"{self.baseFilename}.1")
++            if first_archive.exists():
++                self._compress(first_archive)
++        self._apply_retention()
++
++    def _compress(self, path: Path) -> None:
++        target = path.with_suffix(path.suffix + ".gz")
++        with path.open("rb") as src, gzip.open(target, "wb") as dst:
++            dst.writelines(src)
++        path.unlink(missing_ok=True)
++
++
++def build_file_handler(config: FileHandlerConfig) -> logging.Handler:
++    """Create a file handler based on ``config``."""
++
++    if config.time_rotation:
++        return DateAwareTimedRotatingFileHandler(config=config)
++    return DateAwareRotatingFileHandler(config=config)
+diff --git a/src/podlog/handlers/gelf_udp.py b/src/podlog/handlers/gelf_udp.py
+new file mode 100644
+index 0000000..32daf2c
+--- /dev/null
++++ b/src/podlog/handlers/gelf_udp.py
+@@ -0,0 +1,51 @@
++"""GELF UDP handler implementation."""
++
++from __future__ import annotations
++
++import json
++import logging
++from dataclasses import dataclass
++from logging.handlers import DatagramHandler
++from typing import Mapping
++
++__all__ = ["GELFUDPConfig", "GELFUDPHandler", "build_gelf_udp_handler"]
++
++_GELF_VERSION = "1.1"
++
++
++@dataclass(slots=True)
++class GELFUDPConfig:
++    host: str = "localhost"
++    port: int = 12201
++
++
++class GELFUDPHandler(DatagramHandler):
++    """Minimal GELF handler sending JSON payloads over UDP."""
++
++    def __init__(self, host: str, port: int) -> None:
++        super().__init__(host, port)
++
++    def makePickle(self, record: logging.LogRecord) -> bytes:  # type: ignore[override]
++        payload = {
++            "version": _GELF_VERSION,
++            "host": record.name,
++            "short_message": record.getMessage(),
++            "timestamp": record.created,
++            "level": record.levelno,
++        }
++        if record.exc_info:
++            payload["full_message"] = self.formatException(record.exc_info)
++        extra = {
++            key: value
++            for key, value in record.__dict__.items()
++            if key not in {"name", "msg", "args", "levelname", "levelno", "pathname", "filename", "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName", "created", "msecs", "relativeCreated", "thread", "threadName", "processName", "process", "asctime"}
++        }
++        for key, value in extra.items():
++            payload[f"_{key}"] = value
++        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
++        return data
++
++
++def build_gelf_udp_handler(config: GELFUDPConfig | None = None) -> logging.Handler:
++    cfg = config or GELFUDPConfig()
++    return GELFUDPHandler(cfg.host, cfg.port)
+diff --git a/src/podlog/handlers/null.py b/src/podlog/handlers/null.py
+new file mode 100644
+index 0000000..a08a624
+--- /dev/null
++++ b/src/podlog/handlers/null.py
+@@ -0,0 +1,13 @@
++"""Null handler utilities."""
++
++from __future__ import annotations
++
++import logging
++
++__all__ = ["build_null_handler"]
++
++
++def build_null_handler() -> logging.Handler:
++    """Return a ``NullHandler``."""
++
++    return logging.NullHandler()
+diff --git a/src/podlog/handlers/otlp.py b/src/podlog/handlers/otlp.py
+new file mode 100644
+index 0000000..745f009
+--- /dev/null
++++ b/src/podlog/handlers/otlp.py
+@@ -0,0 +1,55 @@
++"""OTLP logging handler helpers."""
++
++from __future__ import annotations
++
++import logging
++from dataclasses import dataclass
++from typing import Dict, Mapping
++
++__all__ = ["OTLPConfig", "build_otlp_handler"]
++
++try:  # pragma: no cover - optional dependency
++    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
++    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, OTLPLogExporter
++    from opentelemetry.sdk.resources import Resource
++except Exception:  # pragma: no cover - fallback when OTLP not installed
++    LoggerProvider = None  # type: ignore[assignment]
++    LoggingHandler = None  # type: ignore[assignment]
++    BatchLogRecordProcessor = None  # type: ignore[assignment]
++    OTLPLogExporter = None  # type: ignore[assignment]
++    Resource = None  # type: ignore[assignment]
++
++
++@dataclass(slots=True)
++class OTLPConfig:
++    endpoint: str | None = None
++    insecure: bool = False
++    headers: Mapping[str, str] | None = None
++    timeout: float | None = None
++    resource: Mapping[str, str] | None = None
++    logger_name: str = "podlog"
++
++
++def build_otlp_handler(config: OTLPConfig | None = None) -> logging.Handler:
++    """Build a handler that forwards to an OTLP collector."""
++
++    if LoggingHandler is None or LoggerProvider is None:
++        raise RuntimeError("OTLP support requires opentelemetry-sdk to be installed")
++
++    cfg = config or OTLPConfig()
++    resource = Resource.create(dict(cfg.resource or {}))
++    provider = LoggerProvider(resource=resource)
++
++    exporter_kwargs: Dict[str, object] = {"insecure": cfg.insecure}
++    if cfg.endpoint:
++        exporter_kwargs["endpoint"] = cfg.endpoint
++    if cfg.headers:
++        exporter_kwargs["headers"] = dict(cfg.headers)
++    if cfg.timeout is not None:
++        exporter_kwargs["timeout"] = cfg.timeout
++
++    exporter = OTLPLogExporter(**exporter_kwargs)
++    provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
++    handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
++    handler.logger.name = cfg.logger_name
++    return handler
+diff --git a/src/podlog/handlers/queue_async.py b/src/podlog/handlers/queue_async.py
+new file mode 100644
+index 0000000..a2db835
+--- /dev/null
++++ b/src/podlog/handlers/queue_async.py
+@@ -0,0 +1,83 @@
++"""Async logging helpers built on QueueHandler/QueueListener."""
++
++from __future__ import annotations
++
++import logging
++import threading
++from dataclasses import dataclass
++from logging.handlers import QueueHandler, QueueListener
++from queue import Queue
++from typing import Iterable, List
++
++__all__ = ["QueueConfig", "QueueCoordinator"]
++
++
++@dataclass(slots=True)
++class QueueConfig:
++    use_queue_listener: bool = True
++    queue_maxsize: int = 1000
++    flush_interval_ms: int = 500
++    graceful_shutdown_timeout_s: float = 5.0
++
++
++class QueueCoordinator:
++    """Manage a queue-based logging pipeline."""
++
++    def __init__(self, *, config: QueueConfig, handlers: Iterable[logging.Handler]) -> None:
++        self.config = config
++        self.handlers: List[logging.Handler] = list(handlers)
++        self.queue: Queue[logging.LogRecord] = Queue(maxsize=config.queue_maxsize)
++        self.queue_handler = _SafeQueueHandler(self.queue)
++        self.listener = QueueListener(self.queue, *self.handlers, respect_handler_level=True)
++        self._stop_event = threading.Event()
++        self._flusher: threading.Thread | None = None
++        if self.config.flush_interval_ms > 0:
++            self._flusher = threading.Thread(target=self._flush_loop, daemon=True)
++
++    def start(self) -> None:
++        if not self.config.use_queue_listener:
++            return
++        self.listener.start()
++        if self._flusher:
++            self._flusher.start()
++
++    def stop(self) -> None:
++        if not self.config.use_queue_listener:
++            return
++        self._stop_event.set()
++        if self._flusher and self._flusher.is_alive():
++            self._flusher.join(timeout=self.config.graceful_shutdown_timeout_s)
++        self.listener.stop()
++        for handler in self.handlers:
++            try:
++                handler.flush()
++            except Exception:
++                continue
++
++    def _flush_loop(self) -> None:
++        interval = self.config.flush_interval_ms / 1000.0
++        while not self._stop_event.wait(interval):
++            for handler in self.handlers:
++                try:
++                    handler.flush()
++                except Exception:
++                    continue
++
++    def __enter__(self) -> "QueueCoordinator":
++        self.start()
++        return self
++
++    def __exit__(self, exc_type, exc: BaseException | None, tb) -> None:  # type: ignore[override]
++        self.stop()
++
++    def handler(self) -> logging.Handler:
++        """Return the queue handler to attach to loggers."""
++
++        return self.queue_handler
++
++
++class _SafeQueueHandler(QueueHandler):
++    """Queue handler that blocks instead of dropping records when full."""
++
++    def enqueue(self, record: logging.LogRecord) -> None:  # type: ignore[override]
++        self.queue.put(record, block=True)
+diff --git a/src/podlog/handlers/syslog.py b/src/podlog/handlers/syslog.py
+new file mode 100644
+index 0000000..2ffd79c
+--- /dev/null
++++ b/src/podlog/handlers/syslog.py
+@@ -0,0 +1,42 @@
++"""Syslog handler helpers."""
++
++from __future__ import annotations
++
++import logging
++from dataclasses import dataclass
++from logging.handlers import SysLogHandler
++from pathlib import Path
++from typing import Tuple
++
++__all__ = ["SyslogConfig", "build_syslog_handler"]
++
++
++@dataclass(slots=True)
++class SyslogConfig:
++    """Configuration for syslog handler."""
++
++    address: str | Tuple[str, int] | None = ("localhost", 514)
++    facility: int = SysLogHandler.LOG_USER
++    socktype: int | None = None
++
++
++def _parse_address(address: str | Tuple[str, int] | None) -> str | Tuple[str, int] | Path | None:
++    if address is None:
++        return None
++    if isinstance(address, tuple):
++        return address
++    if address.startswith("unix://"):
++        return Path(address.removeprefix("unix://"))
++    if address.startswith("udp://") or address.startswith("tcp://"):
++        _, rest = address.split("://", 1)
++        host, _, port_str = rest.partition(":")
++        port = int(port_str or "514")
++        return (host or "localhost", port)
++    return address
++
++
++def build_syslog_handler(config: SyslogConfig | None = None) -> logging.Handler:
++    cfg = config or SyslogConfig()
++    address = _parse_address(cfg.address)
++    handler = SysLogHandler(address=address, facility=cfg.facility, socktype=cfg.socktype)
++    return handler
+diff --git a/src/podlog/utils/paths.py b/src/podlog/utils/paths.py
+new file mode 100644
+index 0000000..4422027
+--- /dev/null
++++ b/src/podlog/utils/paths.py
+@@ -0,0 +1,59 @@
++"""Path synthesis helpers for log files."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from datetime import datetime
++from pathlib import Path
++from typing import Literal
++
++DateFolderMode = Literal["flat", "nested"]
++
++__all__ = [
++    "DateFolderMode",
++    "DateFolderStrategy",
++    "ensure_directory",
++    "dated_directory",
++    "build_log_path",
++]
++
++
++@dataclass(slots=True)
++class DateFolderStrategy:
++    """Options controlling how date folders are laid out."""
++
++    mode: DateFolderMode = "nested"
++    date_format: str = "%Y-%m-%d"
++
++
++def ensure_directory(path: str | Path) -> Path:
++    """Ensure the directory for ``path`` exists and return it as ``Path``."""
++
++    directory = Path(path)
++    directory.mkdir(parents=True, exist_ok=True)
++    return directory
++
++
++def dated_directory(base_dir: str | Path, *, strategy: DateFolderStrategy, moment: datetime) -> Path:
++    """Return the directory for ``moment`` according to ``strategy``."""
++
++    base = ensure_directory(base_dir)
++    if strategy.mode == "flat":
++        folder = strategy.date_format
++        formatted = moment.strftime(folder)
++        return ensure_directory(base / formatted)
++
++    return ensure_directory(base / f"{moment.year:04d}" / f"{moment.month:02d}" / f"{moment.day:02d}")
++
++
++def build_log_path(
++    base_dir: str | Path,
++    filename: str,
++    *,
++    strategy: DateFolderStrategy,
++    moment: datetime,
++) -> Path:
++    """Build the full path for a log file given the current ``moment``."""
++
++    directory = dated_directory(base_dir, strategy=strategy, moment=moment)
++    return directory / filename
+diff --git a/src/podlog/utils/time.py b/src/podlog/utils/time.py
+new file mode 100644
+index 0000000..6f48953
+--- /dev/null
++++ b/src/podlog/utils/time.py
+@@ -0,0 +1,13 @@
++"""Time utilities for podlog."""
++
++from __future__ import annotations
++
++from datetime import datetime, timezone
++
++__all__ = ["utcnow"]
++
++
++def utcnow() -> datetime:
++    """Return a timezone-aware UTC ``datetime`` instance."""
++
++    return datetime.now(timezone.utc)
+diff --git a/src/podlog/version.py b/src/podlog/version.py
+new file mode 100644
+index 0000000..f197d71
+--- /dev/null
++++ b/src/podlog/version.py
+@@ -0,0 +1,5 @@
++"""Version information for podlog."""
++
++__all__ = ["__version__"]
++
++__version__ = "0.1.0"
+diff --git a/tests/conftest.py b/tests/conftest.py
+new file mode 100644
+index 0000000..b13b836
+--- /dev/null
++++ b/tests/conftest.py
+@@ -0,0 +1,20 @@
++from __future__ import annotations
++
++import logging
++from typing import Iterator
++
++import pytest
++
++import podlog.api as podlog_api
++from podlog.core.manager import GLOBAL_MANAGER
++
++
++@pytest.fixture(autouse=True)
++def reset_podlog() -> Iterator[None]:
++    yield
++    GLOBAL_MANAGER.shutdown()
++    podlog_api._CONFIGURED = False
++    root = logging.getLogger()
++    root.handlers = []
++    root.setLevel(logging.NOTSET)
++    logging.captureWarnings(False)
+diff --git a/tests/test_config_loader.py b/tests/test_config_loader.py
+new file mode 100644
+index 0000000..2c1ac17
+--- /dev/null
++++ b/tests/test_config_loader.py
+@@ -0,0 +1,43 @@
++from __future__ import annotations
++
++from pathlib import Path
++
++import pytest
++
++from podlog.config import loader
++
++
++def test_configuration_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    user_dir = tmp_path / "user"
++    user_dir.mkdir()
++    (user_dir / "podlog.toml").write_text("""[paths]\nbase_dir = \"user_logs\"\n""")
++    monkeypatch.setattr(loader, "user_config_dir", lambda _: str(user_dir))
++
++    project_dir = tmp_path / "project"
++    project_dir.mkdir()
++    (project_dir / "podlog.toml").write_text("""[paths]\nbase_dir = \"local_logs\"\n""")
++    monkeypatch.chdir(project_dir)
++
++    (project_dir / "pyproject.toml").write_text(
++        """[tool.podlog.paths]\nbase_dir = \"pyproject_logs\"\n"""
++    )
++
++    monkeypatch.setenv("PODLOG__PATHS__BASE_DIR", "env_logs")
++
++    config = loader.load_configuration({"paths": {"base_dir": "override_logs"}})
++    assert config.paths.base_dir == Path("override_logs")
++
++    config = loader.load_configuration({})
++    assert config.paths.base_dir == Path("env_logs")
++
++    monkeypatch.delenv("PODLOG__PATHS__BASE_DIR")
++    config = loader.load_configuration({})
++    assert config.paths.base_dir == Path("pyproject_logs")
++
++    (project_dir / "pyproject.toml").unlink()
++    config = loader.load_configuration({})
++    assert config.paths.base_dir == Path("local_logs")
++
++    (project_dir / "podlog.toml").unlink()
++    config = loader.load_configuration({})
++    assert config.paths.base_dir == Path("user_logs")
+diff --git a/tests/test_context_and_formatters.py b/tests/test_context_and_formatters.py
+new file mode 100644
+index 0000000..cf1e774
+--- /dev/null
++++ b/tests/test_context_and_formatters.py
+@@ -0,0 +1,59 @@
++from __future__ import annotations
++
++import json
++from datetime import datetime
++from pathlib import Path
++
++from podlog import api
++from podlog.core.manager import GLOBAL_MANAGER
++
++
++def _dated_folder(base_dir: Path) -> Path:
++    today = datetime.now()
++    return base_dir / today.strftime("%Y-%m-%d")
++
++
++def test_context_and_formatters(tmp_path: Path) -> None:
++    overrides = {
++        "paths": {"base_dir": str(tmp_path), "date_folder_mode": "flat"},
++        "formatters": {
++            "text": {"human": {"show_extras": True}},
++            "jsonl": {"audit": {}},
++        },
++        "handlers": {
++            "enabled": ["text_file", "json_file"],
++            "text_file": {
++                "type": "file",
++                "level": "INFO",
++                "formatter": "text.human",
++                "filename": "text.log",
++            },
++            "json_file": {
++                "type": "file",
++                "level": "INFO",
++                "formatter": "jsonl.audit",
++                "filename": "events.jsonl",
++            },
++        },
++        "logging": {
++            "root": {"level": "INFO", "handlers": ["text_file", "json_file"]},
++        },
++    }
++
++    api.configure(overrides)
++    logger = api.get_context_logger("tests.context", request_id="abc123")
++    logger.add_extra(order=42)
++    logger.info("hello world")
++    GLOBAL_MANAGER.shutdown()
++
++    folder = _dated_folder(tmp_path)
++    text_path = folder / "text.log"
++    json_path = folder / "events.jsonl"
++
++    text_line = text_path.read_text(encoding="utf-8").strip()
++    assert "request_id=abc123" in text_line
++    assert "order=42" in text_line
++
++    json_record = json.loads(json_path.read_text(encoding="utf-8").strip())
++    assert json_record["context"] == "request_id=abc123"
++    assert json_record["extra"]["order"] == 42
+diff --git a/tests/test_file_rotation.py b/tests/test_file_rotation.py
+new file mode 100644
+index 0000000..5e4156c
+--- /dev/null
++++ b/tests/test_file_rotation.py
+@@ -0,0 +1,40 @@
++from __future__ import annotations
++
++import logging
++from pathlib import Path
++
++from podlog.handlers.file_rotating import (
++    FileHandlerConfig,
++    RetentionPolicy,
++    SizeRotation,
++    build_file_handler,
++)
++from podlog.utils.paths import DateFolderStrategy
++
++
++def test_rotation_and_retention(tmp_path: Path) -> None:
++    strategy = DateFolderStrategy(mode="flat", date_format="%Y%m%d")
++    config = FileHandlerConfig(
++        base_dir=tmp_path,
++        filename="app.log",
++        strategy=strategy,
++        size_rotation=SizeRotation(max_bytes=128, backup_count=5),
++        retention=RetentionPolicy(max_files=2, compress=True),
++    )
++    handler = build_file_handler(config)
++    logger = logging.getLogger("podlog.rotation")
++    logger.setLevel(logging.INFO)
++    logger.addHandler(handler)
++    try:
++        for idx in range(40):
++            logger.info("event-%s %s", idx, "x" * 50)
++    finally:
++        logger.removeHandler(handler)
++        handler.flush()
++        handler.close()
++
++    folder = next(tmp_path.iterdir())
++    archives = [p for p in folder.iterdir() if p.name.startswith("app.log.")]
++    gz_archives = [p for p in archives if p.suffix.endswith("gz")]
++    assert len(archives) <= 2
++    assert gz_archives, "Expected compressed archives to be present"
+diff --git a/tests/test_filters_routing.py b/tests/test_filters_routing.py
+new file mode 100644
+index 0000000..324a707
+--- /dev/null
++++ b/tests/test_filters_routing.py
+@@ -0,0 +1,52 @@
++from __future__ import annotations
++
++from pathlib import Path
++
++from podlog import api
++from podlog.core.manager import GLOBAL_MANAGER
++
++
++def test_filters_route_records(tmp_path: Path) -> None:
++    overrides = {
++        "paths": {"base_dir": str(tmp_path), "date_folder_mode": "flat"},
++        "formatters": {"text": {"base": {}}},
++        "filters": {
++            "warn_only": {"type": "min", "level": "WARNING"},
++            "info_only": {"type": "exact", "level": "INFO"},
++        },
++        "handlers": {
++            "enabled": ["info_file", "warn_file"],
++            "info_file": {
++                "type": "file",
++                "level": "INFO",
++                "formatter": "text.base",
++                "filename": "info.log",
++                "filters": ["info_only"],
++            },
++            "warn_file": {
++                "type": "file",
++                "level": "WARNING",
++                "formatter": "text.base",
++                "filename": "warn.log",
++                "filters": ["warn_only"],
++            },
++        },
++        "logging": {
++            "root": {"level": "INFO", "handlers": ["info_file", "warn_file"]},
++        },
++    }
++
++    api.configure(overrides)
++    logger = api.get_logger("tests.filters")
++    logger.info("info message")
++    logger.warning("warning message")
++    GLOBAL_MANAGER.shutdown()
++
++    folder = next(tmp_path.iterdir())
++    info_lines = (folder / "info.log").read_text(encoding="utf-8").strip().splitlines()
++    warn_lines = (folder / "warn.log").read_text(encoding="utf-8").strip().splitlines()
++
++    assert any("info message" in line for line in info_lines)
++    assert not any("warning message" in line for line in info_lines)
++    assert any("warning message" in line for line in warn_lines)
++    assert not any("info message" in line for line in warn_lines)
+diff --git a/tests/test_paths.py b/tests/test_paths.py
+new file mode 100644
+index 0000000..58635e6
+--- /dev/null
++++ b/tests/test_paths.py
+@@ -0,0 +1,22 @@
++from __future__ import annotations
++
++from datetime import datetime
++from pathlib import Path
++
++from podlog.utils.paths import DateFolderStrategy, build_log_path
++
++
++def test_build_log_path_nested(tmp_path: Path) -> None:
++    moment = datetime(2023, 1, 2, 3, 4, 5)
++    strategy = DateFolderStrategy(mode="nested")
++    path = build_log_path(tmp_path, "app.log", strategy=strategy, moment=moment)
++    assert path.parent == tmp_path / "2023" / "01" / "02"
++    assert path.name == "app.log"
++
++
++def test_build_log_path_flat(tmp_path: Path) -> None:
++    moment = datetime(2023, 12, 31)
++    strategy = DateFolderStrategy(mode="flat", date_format="%Y%m%d")
++    path = build_log_path(tmp_path, "audit.log", strategy=strategy, moment=moment)
++    assert path.parent == tmp_path / "20231231"
++    assert path.name == "audit.log"
+diff --git a/tests/test_queue_async.py b/tests/test_queue_async.py
+new file mode 100644
+index 0000000..bbd676f
+--- /dev/null
++++ b/tests/test_queue_async.py
+@@ -0,0 +1,42 @@
++from __future__ import annotations
++
++from pathlib import Path
++
++from podlog import api
++from podlog.core.manager import GLOBAL_MANAGER
++
++
++def test_queue_shutdown_flushes(tmp_path: Path) -> None:
++    overrides = {
++        "paths": {"base_dir": str(tmp_path), "date_folder_mode": "flat"},
++        "formatters": {"text": {"base": {}}},
++        "handlers": {
++            "enabled": ["queue_file"],
++            "queue_file": {
++                "type": "file",
++                "level": "INFO",
++                "formatter": "text.base",
++                "filename": "queue.log",
++            },
++        },
++        "logging": {
++            "root": {"level": "INFO", "handlers": ["queue_file"]},
++        },
++        "async": {
++            "use_queue_listener": True,
++            "queue_maxsize": 5,
++            "flush_interval_ms": 10,
++            "graceful_shutdown_timeout_s": 1.0,
++        },
++    }
++
++    api.configure(overrides)
++    logger = api.get_logger("tests.queue")
++    for idx in range(20):
++        logger.info("queued %s", idx)
++
++    GLOBAL_MANAGER.shutdown()
++
++    folder = next(tmp_path.iterdir())
++    contents = (folder / "queue.log").read_text(encoding="utf-8").strip().splitlines()
++    assert len(contents) == 20
+-- 
+2.43.0
+
