@@ -34,7 +34,8 @@ class GELFUDPHandler(DatagramHandler):
             "level": record.levelno,
         }
         if record.exc_info:
-            payload["full_message"] = self.formatException(record.exc_info)
+            formatter = self.formatter or logging.Formatter()
+            payload["full_message"] = formatter.formatException(record.exc_info)
         extra = {
             key: value
             for key, value in record.__dict__.items()

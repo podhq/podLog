@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass
 from logging.handlers import QueueHandler, QueueListener
 from queue import Queue
-from typing import Iterable, List
+from typing import Iterable, List, cast
 
 __all__ = ["QueueConfig", "QueueCoordinator"]
 
@@ -80,4 +80,5 @@ class _SafeQueueHandler(QueueHandler):
     """Queue handler that blocks instead of dropping records when full."""
 
     def enqueue(self, record: logging.LogRecord) -> None:  # type: ignore[override]
-        self.queue.put(record, block=True)
+        queue = cast(Queue[logging.LogRecord], self.queue)
+        queue.put(record, block=True)

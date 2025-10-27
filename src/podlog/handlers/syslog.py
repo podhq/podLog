@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from logging.handlers import SysLogHandler
 from pathlib import Path
+from socket import SocketKind
 from typing import Tuple
 
 __all__ = ["SyslogConfig", "build_syslog_handler"]
@@ -17,16 +18,16 @@ class SyslogConfig:
 
     address: str | Tuple[str, int] | None = ("localhost", 514)
     facility: int = SysLogHandler.LOG_USER
-    socktype: int | None = None
+    socktype: SocketKind | None = None
 
 
-def _parse_address(address: str | Tuple[str, int] | None) -> str | Tuple[str, int] | Path | None:
+def _parse_address(address: str | Tuple[str, int] | None) -> str | Tuple[str, int]:
     if address is None:
-        return None
+        return ("localhost", 514)
     if isinstance(address, tuple):
         return address
     if address.startswith("unix://"):
-        return Path(address.removeprefix("unix://"))
+        return str(Path(address.removeprefix("unix://")))
     if address.startswith("udp://") or address.startswith("tcp://"):
         _, rest = address.split("://", 1)
         host, _, port_str = rest.partition(":")

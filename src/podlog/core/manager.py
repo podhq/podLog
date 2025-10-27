@@ -7,7 +7,7 @@ from typing import Dict, Set
 
 from ..config.schema import PodlogConfig
 from ..handlers.queue_async import QueueCoordinator
-from .context import inject_context
+from .context import ContextAdapter, inject_context
 from .levels import ensure_level, register_trace_level
 from .registry import build_filter, build_formatter, build_handler
 from .validation import validate_configuration
@@ -88,7 +88,7 @@ class LogManager:
     def get_logger(self, name: str) -> logging.Logger:
         return logging.getLogger(name)
 
-    def get_context_logger(self, name: str, **context_kv: object) -> logging.LoggerAdapter:
+    def get_context_logger(self, name: str, **context_kv: object) -> ContextAdapter:
         logger = self.get_logger(name)
         if self._config and not self._config.context.enabled:
             base = {}
