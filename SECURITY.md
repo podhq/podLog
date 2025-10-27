@@ -6,7 +6,7 @@ The latest minor release of podlog receives security fixes. Older releases may r
 
 ## Reporting a vulnerability
 
-1. Email support@podhq.example with the subject line `SECURITY`.
+1. Email <mohsen57a@gmail.com> with the subject line `SECURITY`.
 2. Include detailed reproduction steps, affected versions, and any relevant configuration snippets.
 3. We will acknowledge receipt within 3 business days and coordinate a timeline for remediation and disclosure.
 

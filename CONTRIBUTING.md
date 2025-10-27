@@ -6,6 +6,7 @@ Thanks for your interest in improving podlog! We welcome bug reports, feature re
 
 1. Fork the repository and create a feature branch.
 2. Install dependencies:
+
    ```bash
    python -m venv .venv
    source .venv/bin/activate
@@ -13,7 +14,9 @@ Thanks for your interest in improving podlog! We welcome bug reports, feature re
    pip install -r requirements-dev.txt  # if available
    pre-commit install
    ```
+
 3. Run the test suite and lint checks before pushing:
+
    ```bash
    pytest
    pre-commit run --all-files
