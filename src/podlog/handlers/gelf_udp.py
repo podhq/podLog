@@ -6,7 +6,6 @@ import json
 import logging
 from dataclasses import dataclass
 from logging.handlers import DatagramHandler
-from typing import Mapping
 
 __all__ = ["GELFUDPConfig", "GELFUDPHandler", "build_gelf_udp_handler"]
 

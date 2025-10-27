@@ -71,7 +71,11 @@ def _load_user_config() -> Dict[str, Any]:
         return {}
     data: Dict[str, Any] = {}
     for filename in ("podlog.toml", "podlog.yaml", "podlog.yml"):
-        payload = _load_toml(cfg_dir / filename) if filename.endswith(".toml") else _load_yaml(cfg_dir / filename)
+        payload = (
+            _load_toml(cfg_dir / filename)
+            if filename.endswith(".toml")
+            else _load_yaml(cfg_dir / filename)
+        )
         if payload:
             data = _merge(data, payload)
     return data

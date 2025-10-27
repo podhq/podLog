@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping
+from typing import Any, Dict, Iterable, List, Mapping
 
 from ..handlers.queue_async import QueueConfig
 from ..utils.paths import DateFolderMode, DateFolderStrategy
