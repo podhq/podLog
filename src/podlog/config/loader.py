@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Mapping, MutableMapping
+from types import ModuleType
+from typing import Any, Callable, Dict, Mapping, cast
 
 from platformdirs import user_config_dir
 
@@ -17,9 +19,11 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore[no-redef]
 
 try:  # pragma: no cover
-    import yaml
+    yaml_module = importlib.import_module("yaml")
 except ModuleNotFoundError:  # pragma: no cover
-    yaml = None  # type: ignore[assignment]
+    yaml_module = None
+
+yaml: ModuleType | None = yaml_module
 
 
 _ENV_PREFIX = "PODLOG__"
@@ -36,16 +40,28 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
     if yaml is None or not path.exists():
         return {}
     with path.open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
-    return data or {}
+        loader = getattr(yaml, "safe_load", None)
+        if not callable(loader):
+            return {}
+        yaml_loader = cast(Callable[[Any], Any], loader)
+        data = yaml_loader(fh)
+    if isinstance(data, Mapping):
+        return {str(key): value for key, value in data.items()}
+    return {}
 
 
-def _merge(base: MutableMapping[str, Any], incoming: Mapping[str, Any]) -> MutableMapping[str, Any]:
+def _merge(base: Dict[str, Any], incoming: Mapping[str, Any]) -> Dict[str, Any]:
     for key, value in incoming.items():
-        if isinstance(value, Mapping) and isinstance(base.get(key), Mapping):
-            _merge(base[key], value)  # type: ignore[index]
+        existing = base.get(key)
+        if isinstance(value, Mapping) and isinstance(existing, dict):
+            _merge(existing, value)
+        elif isinstance(value, Mapping) and isinstance(existing, Mapping):
+            nested = dict(existing)
+            base[key] = _merge(nested, value)
+        elif isinstance(value, Mapping):
+            base[key] = _merge({}, value)
         else:
-            base[key] = value  # type: ignore[index]
+            base[key] = value
     return base
 
 
@@ -57,7 +73,7 @@ def _load_user_config() -> Dict[str, Any]:
     for filename in ("podlog.toml", "podlog.yaml", "podlog.yml"):
         payload = _load_toml(cfg_dir / filename) if filename.endswith(".toml") else _load_yaml(cfg_dir / filename)
         if payload:
-            data = _merge(data or {}, payload)
+            data = _merge(data, payload)
     return data
 
 
@@ -68,7 +84,7 @@ def _load_local_config() -> Dict[str, Any]:
         path = cwd / filename
         payload = _load_toml(path) if filename.endswith(".toml") else _load_yaml(path)
         if payload:
-            data = _merge(data or {}, payload)
+            data = _merge(data, payload)
     return data
 
 
@@ -81,26 +97,29 @@ def _load_pyproject() -> Dict[str, Any]:
     if not isinstance(tool, Mapping):
         return {}
     podlog = tool.get("podlog", {})
-    return podlog if isinstance(podlog, Mapping) else {}
+    if isinstance(podlog, Mapping):
+        return {str(key): value for key, value in podlog.items()}
+    return {}
 
 
 def _coerce_value(value: str) -> Any:
-    lowered = value.strip()
-    if lowered.lower() in {"true", "false"}:
-        return lowered.lower() == "true"
+    stripped = value.strip()
+    lowered = stripped.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
     try:
-        return int(lowered)
+        return int(stripped)
     except ValueError:
         try:
-            return float(lowered)
+            return float(stripped)
         except ValueError:
             pass
-    if lowered.startswith("[") or lowered.startswith("{"):
+    if stripped.startswith("[") or stripped.startswith("{"):
         try:
-            return json.loads(lowered)
+            return json.loads(stripped)
         except json.JSONDecodeError:
             pass
-    return value
+    return stripped
 
 
 def _env_config() -> Dict[str, Any]:
@@ -109,10 +128,11 @@ def _env_config() -> Dict[str, Any]:
         if not env_key.startswith(_ENV_PREFIX):
             continue
         path = env_key[len(_ENV_PREFIX) :].split("__")
-        target = data
+        target: Dict[str, Any] = data
         for segment in path[:-1]:
             seg = segment.lower()
-            target = target.setdefault(seg, {})  # type: ignore[assignment]
+            child = target.setdefault(seg, {})
+            target = cast(Dict[str, Any], child)
         target[path[-1].lower()] = _coerce_value(raw_value)
     return data
 

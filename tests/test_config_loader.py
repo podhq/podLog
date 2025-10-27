@@ -41,3 +41,11 @@ def test_configuration_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     (project_dir / "podlog.toml").unlink()
     config = loader.load_configuration({})
     assert config.paths.base_dir == Path("user_logs")
+
+
+def test_env_config_trims_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PODLOG__LOGGING__ROOT__LEVEL", "  DEBUG  ")
+
+    config = loader.load_configuration({})
+
+    assert config.root_logger.level == "DEBUG"

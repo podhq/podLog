@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 from dataclasses import dataclass
-from typing import Dict, Mapping
+from typing import Any, Dict, Mapping, cast
 
 __all__ = ["OTLPConfig", "build_otlp_handler"]
 
-try:  # pragma: no cover - optional dependency
-    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, OTLPLogExporter
-    from opentelemetry.sdk.resources import Resource
-except Exception:  # pragma: no cover - fallback when OTLP not installed
-    LoggerProvider = None  # type: ignore[assignment]
-    LoggingHandler = None  # type: ignore[assignment]
-    BatchLogRecordProcessor = None  # type: ignore[assignment]
-    OTLPLogExporter = None  # type: ignore[assignment]
-    Resource = None  # type: ignore[assignment]
+def _load_otlp_dependencies() -> tuple[type[Any], type[Any], type[Any], type[Any], type[Any]]:
+    logs_module = importlib.import_module("opentelemetry.sdk._logs")
+    export_module = importlib.import_module("opentelemetry.sdk._logs.export")
+    resources_module = importlib.import_module("opentelemetry.sdk.resources")
+    logger_provider = getattr(logs_module, "LoggerProvider")
+    logging_handler = getattr(logs_module, "LoggingHandler")
+    batch_processor = getattr(export_module, "BatchLogRecordProcessor")
+    exporter = getattr(export_module, "OTLPLogExporter")
+    resource = getattr(resources_module, "Resource")
+    return logger_provider, logging_handler, batch_processor, exporter, resource
 
 
 @dataclass(slots=True)
@@ -33,12 +34,20 @@ class OTLPConfig:
 def build_otlp_handler(config: OTLPConfig | None = None) -> logging.Handler:
     """Build a handler that forwards to an OTLP collector."""
 
-    if LoggingHandler is None or LoggerProvider is None:
-        raise RuntimeError("OTLP support requires opentelemetry-sdk to be installed")
-
     cfg = config or OTLPConfig()
-    resource = Resource.create(dict(cfg.resource or {}))
-    provider = LoggerProvider(resource=resource)
+    try:
+        (
+            logger_provider_cls,
+            logging_handler_cls,
+            batch_processor_cls,
+            exporter_cls,
+            resource_cls,
+        ) = _load_otlp_dependencies()
+    except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency missing
+        raise RuntimeError("OTLP support requires opentelemetry-sdk to be installed") from exc
+
+    resource = cast(Any, resource_cls).create(dict(cfg.resource or {}))
+    provider = cast(Any, logger_provider_cls)(resource=resource)
 
     exporter_kwargs: Dict[str, object] = {"insecure": cfg.insecure}
     if cfg.endpoint:
@@ -48,8 +57,9 @@ def build_otlp_handler(config: OTLPConfig | None = None) -> logging.Handler:
     if cfg.timeout is not None:
         exporter_kwargs["timeout"] = cfg.timeout
 
-    exporter = OTLPLogExporter(**exporter_kwargs)
-    provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
-    handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
+    exporter = cast(Any, exporter_cls)(**exporter_kwargs)
+    batch_processor = cast(Any, batch_processor_cls)(exporter)
+    provider.add_log_record_processor(batch_processor)
+    handler = cast(Any, logging_handler_cls)(level=logging.NOTSET, logger_provider=provider)
     handler.logger.name = cfg.logger_name
     return handler
