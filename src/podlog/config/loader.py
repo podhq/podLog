@@ -107,22 +107,23 @@ def _load_pyproject() -> Dict[str, Any]:
 
 
 def _coerce_value(value: str) -> Any:
-    lowered = value.strip()
-    if lowered.lower() in {"true", "false"}:
-        return lowered.lower() == "true"
+    stripped = value.strip()
+    lowered = stripped.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
     try:
-        return int(lowered)
+        return int(stripped)
     except ValueError:
         try:
-            return float(lowered)
+            return float(stripped)
         except ValueError:
             pass
-    if lowered.startswith("[") or lowered.startswith("{"):
+    if stripped.startswith("[") or stripped.startswith("{"):
         try:
-            return json.loads(lowered)
+            return json.loads(stripped)
         except json.JSONDecodeError:
             pass
-    return value
+    return stripped
 
 
 def _env_config() -> Dict[str, Any]:
